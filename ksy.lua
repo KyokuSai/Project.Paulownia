@@ -453,6 +453,13 @@ ksy = {
                     func(unpack(fixedparams), ...)
                 end
             end,
+            run = function()
+                local value = func()
+                if value ~= nil then
+                    return value
+                end
+                return ""
+            end,
         }
     end,
     clock = function(start_time, end_time)
