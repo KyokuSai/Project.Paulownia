@@ -1,15 +1,4 @@
---[[極彩花夢 - 正文字幕样式配置自动化]]
---[[———————————————————————————————]]
---[[为不同角色配置不同的效果]]
---[[修正标点符号显示效果，为句首、句尾含有标点符号的行调整重心]]
---[[将开始时间、结束时间设为最近的帧]]
---[[添加\furigana(num,text,fsc,fsp)]]
---[[检查字幕是否超出画布或接近边缘]]
---[[检查字幕持续时间是否过短]]
---[[检查字幕开始时间、结束时间周围是否有关键帧]]
---[[检查字幕是否闪轴]]
---[[为特殊对话框样式进行适配]]
-
+--[[by HanaCream]]
 aegisub = _G.aegisub
 pairs = _G.pairs
 ipairs = _G.ipairs
@@ -88,18 +77,18 @@ size_t wcslen(const wchar_t*);
 ]])
 
 ksy = {
-    strinfo = function(str, styleref)
+    strinfo = function(str, styleref) --[[获取指定字符串的几何属性]]
         styleref = styleref ~= nil and styleref or line.styleref
         local width, height, descent, extlead = aegisub.text_extents(styleref, str)
         return { width = width, height = height, descent = descent, extlead = extlead }
     end,
-    getw = function(str, styleref)
+    getw = function(str, styleref) --[[获取指定字符串的宽度]]
         return ksy.strinfo(str, styleref).width
     end,
-    geth = function(str, styleref)
+    geth = function(str, styleref) --[[获取指定字符串的高度]]
         return ksy.strinfo(str, styleref).height
     end,
-    c2c = function(str)
+    c2c = function(str) --[[HEX颜色代码与ASS颜色代码互转]]
         local color = ""
         if re.find(str, "#") ~= nil then
             match = re.match(str, "#([A-Za-z0-9]{2})([A-Za-z0-9]{2})([A-Za-z0-9]{2})")
@@ -110,7 +99,7 @@ ksy = {
         end
         return color
     end,
-    len = function(str)
+    len = function(str) --[[获取字符串长度]]
         local tmp = str
         local count = 0
         local byteCount = 0
@@ -131,7 +120,7 @@ ksy = {
         end
         return count
     end,
-    sub = function(str, start, length)
+    sub = function(str, start, length) --[[截取字符串]]
         start = start - 1
         if (length <= 0) then return "" end
         local tmp = str
@@ -162,7 +151,7 @@ ksy = {
         end
         return string.sub(str, byteSubStart, byteSubEnd)
     end,
-    rep = function(str, search, replace)
+    rep = function(str, search, replace) --[[替换字符串]]
         local res = ""
         for i = 0, ksy.len(str) - 1 do
             local current = ksy.sub(str, i + 1, 1)
@@ -201,20 +190,14 @@ ksy = {
         local y1 = x * sin_a + y * cos_a
         return x1, y1, z
     end,
-    rotate = function(shape, center_x, center_y, theta1, theta2, theta3)
-        return ksy.shape.filter(shape,
-            function(x, y)
-                return ksy._rotate(x, y, 0, center_x, center_y, 0, theta1, theta2, theta3)
-            end)
-    end,
-    circle = function(r)
+    circle = function(r) --[[贝塞尔圆]]
         local x = r * (2 ^ .5 - 1) * 4 / 3
         local c = string.format(
             "m 0 -%s b -%s -%s -%s -%s -%s 0 b -%s %s -%s %s 0 %s b %s %s %s %s %s 0 b %s -%s %s -%s 0 -%s ",
             r, x, r, r, x, r, r, x, x, r, r, x, r, r, x, r, r, x, x, r, r)
         return c
     end,
-    star = function(angles, majorAxis, minorAxis, frz)
+    star = function(angles, majorAxis, minorAxis, frz) --[[等边半正凹多边形]]
         if frz == nil then frz = 0 end
         local points = {}
         local angle = math.pi / angles
@@ -229,7 +212,7 @@ ksy = {
         draw = ksy.rotate(draw, 0, 0, 0, 0, frz - 90)
         return draw
     end,
-    deg = function(x1, y1, x2, y2)
+    deg = function(x1, y1, x2, y2) --[[相对角度]]
         local dx = x2 - x1
         local dy = y2 - y1
         local angle = math.atan2(dy, dx)
@@ -247,7 +230,7 @@ ksy = {
         end
         aegisub.debug.out(2, e .. "\n")
     end,
-    copy = function(tbl, depth)
+    copy = function(tbl, depth) --[[深拷贝]]
         if type(tbl) ~= "table" then
             return tbl
         end
@@ -274,7 +257,7 @@ ksy = {
         ffi.C.MultiByteToWideChar(ffi.C.CP_UTF8, 0x0, str, -1, ws, wlen)
         return ws
     end,
-    text2shape = function(text, styleref, font_precision, fp_precision)
+    text2shape = function(text, styleref, font_precision, fp_precision) --[[文字转绘图, 主要代码来自Yutils]]
         styleref = styleref ~= nil and styleref or line.styleref
         font_precision = font_precision ~= nil and font_precision or 64
         fp_precision = fp_precision ~= nil and fp_precision or 2
@@ -359,11 +342,11 @@ ksy = {
             end
         end
         ffi.C.AbortPath(dc)
-        return ksy.table(shape).join(" ")
+        return ksy.shape(ksy.table(shape).join(" "))
     end,
     table = function(tbl)
         return {
-            contains = function(value, ...)
+            contains = function(value, ...) --[[判断是否包含指定值]]
                 if value == nil then
                     return true
                 end
@@ -379,7 +362,7 @@ ksy = {
                 end
                 return true
             end,
-            containsKey = function(key, ...)
+            containsKey = function(key, ...) --[[判断是否包含指定键]]
                 if key == nil then
                     return true
                 end
@@ -391,10 +374,10 @@ ksy = {
                 end
                 return true
             end,
-            join = function(separator)
+            join = function(separator) --[[转字符串]]
                 return table.concat(tbl, separator)
             end,
-            dedup = function()
+            dedup = function() --[[去重]]
                 local seen = {}
                 local removeindices = {}
                 for i, value in ipairs(tbl) do
@@ -406,7 +389,7 @@ ksy = {
                 end
                 return ksy.table(tbl).removeAt(unpack(removeindices))
             end,
-            remove = function(value, ...)
+            remove = function(value, ...) --[[移除指定值]]
                 for i = #tbl, 1, -1 do
                     for _i = 1, select("#", value, ...) do
                         local _value = select(_i, value, ...)
@@ -417,7 +400,7 @@ ksy = {
                 end
                 return ksy.table(tbl)
             end,
-            removeAt = function(index, ...)
+            removeAt = function(index, ...) --[[移除指定索引]]
                 local indices = { index, ... }
                 table.sort(indices, function(a, b)
                     return a > b
@@ -431,14 +414,14 @@ ksy = {
                 end
                 return ksy.table(tbl)
             end,
-            removeKey = function(key, ...)
+            removeKey = function(key, ...) --[[移除指定键]]
                 for i = 1, select("#", key, ...) do
                     local _key = select(i, key, ...)
                     tbl[_key] = nil
                 end
                 return ksy.table(tbl)
             end,
-            removeValue = function(value, ...)
+            removeValue = function(value, ...) --[[移除指定值]]
                 for k, v in pairs(tbl) do
                     for i = 1, select("#", value, ...) do
                         local _value = select(i, value, ...)
@@ -449,14 +432,14 @@ ksy = {
                 end
                 return ksy.table(tbl)
             end,
-            add = function(value, ...)
+            add = function(value, ...) --[[添加指定值]]
                 for i = 1, select("#", value, ...) do
                     local _value = select(i, value, ...)
                     table.insert(tbl, _value)
                 end
                 return ksy.table(tbl)
             end,
-            copy = function(depth)
+            copy = function(depth) --[[深拷贝]]
                 return ksy.table(ksy.copy(tbl, depth))
             end,
             value = tbl,
@@ -545,7 +528,7 @@ ksy = {
             end
             return _shapes
         end
-        local function _calc_windings(vertex, move, precision)
+        local function _calc_windings(vertex, move, precision) --[[计算环绕数]]
             local _vertex, _commands, _points = ksy.copy(vertex), ksy.copy(move.commands), ksy.copy(move.points)
             local x, y = _vertex.x, _vertex.y
             local windings = 0
@@ -614,7 +597,7 @@ ksy = {
             end
             return windings
         end
-        local function _separate_moves()
+        local function _separate_moves() --[[分离绘图]]
             for i, command in ipairs(commands) do
                 if command == "m" then
                     ksy.table(moves).add({ commands = {}, points = {} })
@@ -629,7 +612,7 @@ ksy = {
                 end
             end
         end
-        local function _separate_domains(precision)
+        local function _separate_domains(precision) --[[分离连通域]]
             local _intersects = {}
             for i, move in ipairs(moves) do
                 _intersects[i] = {}
@@ -662,7 +645,7 @@ ksy = {
             ksy.table(moves).removeAt(unpack(removeindices))
         end
         return {
-            bezier = function(t)
+            bezier = function(t) --[[计算贝塞尔曲线在参数t处的值]]
                 local x1, y1 = points[1].x, points[1].y
                 local x2, y2 = points[2].x, points[2].y
                 local x3, y3 = points[3].x, points[3].y
@@ -676,18 +659,23 @@ ksy = {
                 local pY = uuu * y1 + 3 * uu * t * y2 + 3 * u * tt * y3 + ttt * y4
                 return pX, pY
             end,
-            is_intersect = function(x, y, precision)
+            is_intersect = function(x, y, precision) --[[是否相交]]
                 precision = precision ~= nil and precision or 50
                 return _calc_windings({ x = x, y = y }, { commands = commands, points = points }, precision) == 0
             end,
-            filter = function(filter)
+            filter = function(filter) --[[对图形进行自定义处理]]
                 for i, point in ipairs(points) do
                     local x, y = filter(point.x, point.y)
                     points[i] = { x = x, y = y }
                 end
                 return ksy.shape({ commands = commands, points = points })
             end,
-            split = function(precision)
+            rotate = function(center_x, center_y, theta1, theta2, theta3) --[[旋转绘图]]
+                return ksy.shape(shape).filter(function(x, y)
+                    return ksy._rotate(x, y, 0, center_x, center_y, 0, theta1, theta2, theta3)
+                end)
+            end,
+            split = function(precision) --[[拆分连通域]]
                 precision = precision ~= nil and precision or 10
                 _separate_moves()
                 _separate_domains(precision)
@@ -697,6 +685,18 @@ ksy = {
         }
     end,
 }
+
+--[[極彩花夢 - 正文字幕样式配置自动化]]
+--[[———————————————————————————————]]
+--[[为不同角色配置不同的效果]]
+--[[修正标点符号显示效果，为句首、句尾含有标点符号的行调整重心]]
+--[[将开始时间、结束时间设为最近的帧]]
+--[[添加\furi(num,text,fsc,fsp)]]
+--[[检查字幕是否超出画布或接近边缘]]
+--[[检查字幕持续时间是否过短]]
+--[[检查字幕开始时间、结束时间周围是否有关键帧]]
+--[[检查字幕是否闪轴]]
+--[[为特殊对话框样式进行适配]]
 
 function ksy_shuusei()
     if meta["language"] == "ENG" then
@@ -1465,7 +1465,7 @@ function ksy_relocate(res)
             end
         end
     end
-    local furiganas = re.find(line.text, "\\\\furigana\\(\\d+,.+?\\)")
+    local furiganas = re.find(line.text, "\\\\furi\\(\\d+,.+?\\)")
     if config.JPN_only ~= true and ksy_pandora[line.styleref.fontname]["JPN_only"] ~= nil then
         furiganas = nil
     end
@@ -1473,7 +1473,7 @@ function ksy_relocate(res)
         for _, part in pairs(furiganas) do
             local befores, length, furigana, fsc, fsp = "", 0, "", 100, 0
             part = string.sub(line.text, 1, part["first"] - 1) .. part["str"]
-            match = re.match(part, "\\\\furigana\\((\\d+),([^\\)]+?)\\)$")
+            match = re.match(part, "\\\\furi\\((\\d+),([^\\)]+?)\\)$")
             length = tonumber(match[2]["str"]) ~= nil and tonumber(match[2]["str"]) or 0
             furigana = match[3]["str"]
             if re.find(furigana, ",\\d+$") ~= nil then
