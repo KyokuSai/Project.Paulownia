@@ -77,17 +77,6 @@ size_t wcslen(const wchar_t*);
 ]])
 
 ksy = {
-    strinfo = function(str, styleref) --[[获取指定字符串的几何属性]]
-        styleref = styleref ~= nil and styleref or line.styleref
-        local width, height, descent, extlead = aegisub.text_extents(styleref, str)
-        return { width = width, height = height, descent = descent, extlead = extlead }
-    end,
-    getw = function(str, styleref) --[[获取指定字符串的宽度]]
-        return ksy.strinfo(str, styleref).width
-    end,
-    geth = function(str, styleref) --[[获取指定字符串的高度]]
-        return ksy.strinfo(str, styleref).height
-    end,
     c2c = function(str) --[[HEX颜色代码与ASS颜色代码互转]]
         local color = ""
         if re.find(str, "#") ~= nil then
@@ -257,92 +246,112 @@ ksy = {
         ffi.C.MultiByteToWideChar(ffi.C.CP_UTF8, 0x0, str, -1, ws, wlen)
         return ws
     end,
-    text2shape = function(text, styleref, font_precision, fp_precision) --[[文字转绘图, 主要代码来自Yutils]]
+    str = function(str, styleref)
         styleref = styleref ~= nil and styleref or line.styleref
-        font_precision = font_precision ~= nil and font_precision or 64
-        fp_precision = fp_precision ~= nil and fp_precision or 2
-        local resources_deleter
-        local dc = ffi.gc(ffi.C.CreateCompatibleDC(nil), function() resources_deleter() end)
-        ffi.C.SetMapMode(dc, ffi.C.MM_TEXT)
-        ffi.C.SetBkMode(dc, ffi.C.TRANSPARENT)
-        local font = ffi.C.CreateFontW(
-            styleref.fontsize * font_precision, 0, 0, 0,
-            styleref.bold and ffi.C.FW_BOLD or ffi.C.FW_NORMAL,
-            styleref.italic and 1 or 0,
-            styleref.underline and 1 or 0,
-            styleref.strikeout and 1 or 0,
-            ffi.C.DEFAULT_CHARSET,
-            ffi.C.OUT_TT_PRECIS,
-            ffi.C.CLIP_DEFAULT_PRECIS,
-            ffi.C.ANTIALIASED_QUALITY,
-            ffi.C.DEFAULT_PITCH + ffi.C.FF_DONTCARE,
-            ksy.utf8_to_utf16(styleref.fontname)
-        )
-        local old_font = ffi.C.SelectObject(dc, font)
-        resources_deleter = function()
-            ffi.C.SelectObject(dc, old_font)
-            ffi.C.DeleteObject(font)
-            ffi.C.DeleteDC(dc)
-        end
-        local shape, shape_n = {}, 0
-        text = ksy.utf8_to_utf16(text)
-        local text_len = tonumber(ffi.C.wcslen(text))
-        local char_widths
-        if styleref.spacing ~= 0 then
-            char_widths = ffi.new("INT[?]", text_len)
-            local size, space = ffi.new("SIZE[1]"), styleref.spacing * font_precision
-            for i = 0, text_len - 1 do
-                ffi.C.GetTextExtentPoint32W(dc, text + i, 1, size)
-                char_widths[i] = size[0].cx + space
-            end
-        end
-        ffi.C.BeginPath(dc)
-        ffi.C.ExtTextOutW(dc, 0, 0, 0x0, nil, text, text_len, char_widths)
-        ffi.C.EndPath(dc)
-        local points_n = ffi.C.GetPath(dc, nil, nil, 0)
-        if points_n > 0 then
-            local points, types = ffi.new("POINT[?]", points_n), ffi.new("BYTE[?]", points_n)
-            ffi.C.GetPath(dc, points, types, points_n)
-            local i = 0
-            local cur_type, cur_point
-            while i < points_n do
-                cur_type, cur_point = types[i], points[i]
-                if cur_type == ffi.C.PT_MOVETO then
-                    shape_n = shape_n + 1
-                    shape[shape_n] = "m"
-                    shape[shape_n + 1] = ksy.round(cur_point.x / font_precision * styleref.scale_x * .01, fp_precision)
-                    shape[shape_n + 2] = ksy.round(cur_point.y / font_precision * styleref.scale_y * .01, fp_precision)
-                    shape_n = shape_n + 2
-                    i = i + 1
-                elseif cur_type == ffi.C.PT_LINETO or cur_type == (ffi.C.PT_LINETO + ffi.C.PT_CLOSEFIGURE) then
-                    shape_n = shape_n + 1
-                    shape[shape_n] = "l"
-                    shape[shape_n + 1] = ksy.round(cur_point.x / font_precision * styleref.scale_x * .01, fp_precision)
-                    shape[shape_n + 2] = ksy.round(cur_point.y / font_precision * styleref.scale_y * .01, fp_precision)
-                    shape_n = shape_n + 2
-                    i = i + 1
-                elseif cur_type == ffi.C.PT_BEZIERTO or cur_type == (ffi.C.PT_BEZIERTO + ffi.C.PT_CLOSEFIGURE) then
-                    shape_n = shape_n + 1
-                    shape[shape_n] = "b"
-                    shape[shape_n + 1] = ksy.round(cur_point.x / font_precision * styleref.scale_x * .01, fp_precision)
-                    shape[shape_n + 2] = ksy.round(cur_point.y / font_precision * styleref.scale_y * .01, fp_precision)
-                    shape[shape_n + 3] = ksy.round(points[i + 1].x / font_precision * styleref.scale_x * .01,
-                        fp_precision)
-                    shape[shape_n + 4] = ksy.round(points[i + 1].y / font_precision * styleref.scale_y * .01,
-                        fp_precision)
-                    shape[shape_n + 5] = ksy.round(points[i + 2].x / font_precision * styleref.scale_x * .01,
-                        fp_precision)
-                    shape[shape_n + 6] = ksy.round(points[i + 2].y / font_precision * styleref.scale_y * .01,
-                        fp_precision)
-                    shape_n = shape_n + 6
-                    i = i + 3
-                else
-                    i = i + 1
+        return {
+            info = function() --[[获取指定字符串的几何属性]]
+                local width, height, descent, extlead = aegisub.text_extents(styleref, str)
+                return { width = width, height = height, descent = descent, extlead = extlead }
+            end,
+            getw = function() --[[获取指定字符串的宽度]]
+                return ksy.str(str, styleref).info().width
+            end,
+            geth = function() --[[获取指定字符串的高度]]
+                return ksy.str(str, styleref).info().height
+            end,
+            toshape = function(font_precision, fp_precision) --[[文字转绘图, 主要代码来自Yutils]]
+                font_precision = font_precision ~= nil and font_precision or 64
+                fp_precision = fp_precision ~= nil and fp_precision or 2
+                local resources_deleter
+                local dc = ffi.gc(ffi.C.CreateCompatibleDC(nil), function() resources_deleter() end)
+                ffi.C.SetMapMode(dc, ffi.C.MM_TEXT)
+                ffi.C.SetBkMode(dc, ffi.C.TRANSPARENT)
+                local font = ffi.C.CreateFontW(
+                    styleref.fontsize * font_precision, 0, 0, 0,
+                    styleref.bold and ffi.C.FW_BOLD or ffi.C.FW_NORMAL,
+                    styleref.italic and 1 or 0,
+                    styleref.underline and 1 or 0,
+                    styleref.strikeout and 1 or 0,
+                    ffi.C.DEFAULT_CHARSET,
+                    ffi.C.OUT_TT_PRECIS,
+                    ffi.C.CLIP_DEFAULT_PRECIS,
+                    ffi.C.ANTIALIASED_QUALITY,
+                    ffi.C.DEFAULT_PITCH + ffi.C.FF_DONTCARE,
+                    ksy.utf8_to_utf16(styleref.fontname)
+                )
+                local old_font = ffi.C.SelectObject(dc, font)
+                resources_deleter = function()
+                    ffi.C.SelectObject(dc, old_font)
+                    ffi.C.DeleteObject(font)
+                    ffi.C.DeleteDC(dc)
                 end
+                local shape, shape_n = {}, 0
+                text = ksy.utf8_to_utf16(str)
+                local text_len = tonumber(ffi.C.wcslen(text))
+                local char_widths
+                if styleref.spacing ~= 0 then
+                    char_widths = ffi.new("INT[?]", text_len)
+                    local size, space = ffi.new("SIZE[1]"), styleref.spacing * font_precision
+                    for i = 0, text_len - 1 do
+                        ffi.C.GetTextExtentPoint32W(dc, text + i, 1, size)
+                        char_widths[i] = size[0].cx + space
+                    end
+                end
+                ffi.C.BeginPath(dc)
+                ffi.C.ExtTextOutW(dc, 0, 0, 0x0, nil, text, text_len, char_widths)
+                ffi.C.EndPath(dc)
+                local points_n = ffi.C.GetPath(dc, nil, nil, 0)
+                if points_n > 0 then
+                    local points, types = ffi.new("POINT[?]", points_n), ffi.new("BYTE[?]", points_n)
+                    ffi.C.GetPath(dc, points, types, points_n)
+                    local i = 0
+                    local cur_type, cur_point
+                    while i < points_n do
+                        cur_type, cur_point = types[i], points[i]
+                        if cur_type == ffi.C.PT_MOVETO then
+                            shape_n = shape_n + 1
+                            shape[shape_n] = "m"
+                            shape[shape_n + 1] = ksy.round(cur_point.x / font_precision * styleref.scale_x * .01,
+                                fp_precision)
+                            shape[shape_n + 2] = ksy.round(cur_point.y / font_precision * styleref.scale_y * .01,
+                                fp_precision)
+                            shape_n = shape_n + 2
+                            i = i + 1
+                        elseif cur_type == ffi.C.PT_LINETO or cur_type == (ffi.C.PT_LINETO + ffi.C.PT_CLOSEFIGURE) then
+                            shape_n = shape_n + 1
+                            shape[shape_n] = "l"
+                            shape[shape_n + 1] = ksy.round(cur_point.x / font_precision * styleref.scale_x * .01,
+                                fp_precision)
+                            shape[shape_n + 2] = ksy.round(cur_point.y / font_precision * styleref.scale_y * .01,
+                                fp_precision)
+                            shape_n = shape_n + 2
+                            i = i + 1
+                        elseif cur_type == ffi.C.PT_BEZIERTO or cur_type == (ffi.C.PT_BEZIERTO + ffi.C.PT_CLOSEFIGURE) then
+                            shape_n = shape_n + 1
+                            shape[shape_n] = "b"
+                            shape[shape_n + 1] = ksy.round(cur_point.x / font_precision * styleref.scale_x * .01,
+                                fp_precision)
+                            shape[shape_n + 2] = ksy.round(cur_point.y / font_precision * styleref.scale_y * .01,
+                                fp_precision)
+                            shape[shape_n + 3] = ksy.round(points[i + 1].x / font_precision * styleref.scale_x * .01,
+                                fp_precision)
+                            shape[shape_n + 4] = ksy.round(points[i + 1].y / font_precision * styleref.scale_y * .01,
+                                fp_precision)
+                            shape[shape_n + 5] = ksy.round(points[i + 2].x / font_precision * styleref.scale_x * .01,
+                                fp_precision)
+                            shape[shape_n + 6] = ksy.round(points[i + 2].y / font_precision * styleref.scale_y * .01,
+                                fp_precision)
+                            shape_n = shape_n + 6
+                            i = i + 3
+                        else
+                            i = i + 1
+                        end
+                    end
+                end
+                ffi.C.AbortPath(dc)
+                return ksy.shape(ksy.table(shape).join(" "))
             end
-        end
-        ffi.C.AbortPath(dc)
-        return ksy.shape(ksy.table(shape).join(" "))
+        }
     end,
     table = function(tbl)
         return {
@@ -1255,7 +1264,7 @@ local function _calwidth(str)
     if orgline.styleref["align"] == 7 then
         str = re.sub(str, "^.*\\\\N", "")
     end
-    local width = ksy.getw(str, styleref)
+    local width = ksy.str(str, styleref).getw()
     for _search, _replace in pairs(ksy_pandora[line.styleref.fontname]["contentrep"]) do
         if re.find(str, _search) ~= nil then
             local _styleref = ksy.copy(line.styleref, 1)
@@ -1276,9 +1285,9 @@ local function _calwidth(str)
                         _styleref.scale_x = line.styleref.scale_x
                     end
                 end
-                _width = _width + ksy.getw(re.sub(_part, ".+\\}", ""), _styleref)
+                _width = _width + ksy.str(re.sub(_part, ".+\\}", ""), _styleref).getw()
             end
-            width = width + (_width - ksy.getw(_search, line.styleref)) * #re.find(str, _search)
+            width = width + (_width - ksy.str(_search, line.styleref).getw()) * #re.find(str, _search)
         end
     end
     return width
@@ -1448,7 +1457,7 @@ function ksy_relocate(res)
             if ksy.sub(line.text_stripped, i, 1) == search then
                 local befores = ksy.sub(line.text_stripped, 1, i - 1)
                 local twidth, theight = _calwidth(befores),
-                    ksy.geth(line.text_stripped, line.styleref)
+                    ksy.str(line.text_stripped, line.styleref).geth()
                 local x = _callineleft() + twidth
                 if re.find(relocate["content"], "\\\\an5") ~= nil then
                     x = x + _calwidth(search) / 2
@@ -1497,7 +1506,7 @@ function ksy_relocate(res)
             befores = re.sub(part .. "}", "\\{.+?\\}", "")
             local x = _callineleft() + _calwidth(befores) -
                 _calwidth(ksy.sub(befores, ksy.len(befores) - length + 1, length)) / 2
-            local y = meta.res_y - ksy.geth(line.text_stripped, line.styleref) -
+            local y = meta.res_y - ksy.str(line.text_stripped, line.styleref).geth() -
                 (line.margin_t == 0 and line.styleref.margin_t or line.margin_t)
             y = y + ksy_pandora[line.styleref.fontname]["furigana"]["Yoffset"]
             if re.find(line.text, "\\\\an8") ~= nil then
@@ -1544,7 +1553,7 @@ function output_info(str)
     end
 
     local _info = _formatMilliseconds(line.start_time) .. ": " .. str
-    debug(_info)
+    ksy.debug(_info)
 end
 
 function ksy_check()
