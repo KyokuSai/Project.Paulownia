@@ -110,6 +110,9 @@ ksy = {
         return count
     end,
     sub = function(str, start, length) --[[截取字符串]]
+        if start < 0 then
+            return ksy.sub(str, ksy.len(str) - (-start) + 1, (-start))
+        end
         start = start - 1
         if (length <= 0) then return "" end
         local tmp = str
@@ -456,6 +459,16 @@ ksy = {
     end,
     func = function(func)
         return {
+            parse = function()
+                if _G.rawget(_G, "ASSCommandCompile") == nil then
+                    ASSCommandCompile = re.compile("\\\\([^(]+)\\(([^)]*)\\)")
+                end
+                local match = ASSCommandCompile:match(func)
+                return {
+                    func = match[2]["str"],
+                    args = re.split(match[3]["str"], ",")
+                }
+            end,
             partial = function(param, ...)
                 local fixedparams = { param, ... }
                 return function(...)
@@ -997,7 +1010,7 @@ function ksy_menu()
             ["kawaii"] = {
                 ["Sx-jp"] =
                     _generate_style(
-                        "Style: Sx-jp,A-OTF Shin Maru Go Pr6N DB,65,&H00FFFFFF,&HFFFFFFFF,&H00000000,&H64000000,0,0,0,0,99,100,0.5,0,1,2.42,0,2,0,0,15,128"),
+                        "Style: Sx-jp,A-OTF Shin Maru Go Pr6N DB,64,&H00FFFFFF,&HFFFFFFFF,&H00000000,&H64000000,0,0,0,0,99,100,0.5,0,1,2.42,0,2,0,0,15,128"),
                 ["Sx-zh"] =
                     _generate_style(
                         "Style: Sx-zh,方正兰亭圆_GBK_中,62,&H00FFFFFF,&HFFFFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2.42,0,2,0,0,65,1"),
@@ -1066,7 +1079,7 @@ ksy_pandora = {
             ["！"] = "！",
             ["…"] = "…",
             ["「"] = "「",
-            [" "] = "{\\fscx180} {\\fscx}",
+            [" "] = "{\\fscx200} {\\fscx}",
             ["」"] = "」",
             ["・"] = "・",
         },
@@ -1074,8 +1087,8 @@ ksy_pandora = {
         },
         ["furigana"] = {
             ["content"] = "{\\an%s\\fs%s\\fscx%s\\fscy%s\\fsp%s\\pos(%s,%s)}%s",
-            ["Yoffset"] = 12,
-            ["Yoffset2"] = -12,
+            ["Yoffset"] = 8,
+            ["Yoffset2"] = -8,
             ["Yoffset3"] = -6,
             ["fscx"] = 84,
             ["fscy"] = 82,
@@ -1094,7 +1107,7 @@ ksy_pandora = {
             ["！"] = "{\\fscx50} {\\fscx110}!{\\fscx150} {\\fscx0}!{\\fscx}",
             ["…"] = "{\\alpha&HFF&\\fscx90}喵{\\alpha\\fscx}",
             ["「"] = "「",
-            [" "] = "{\\fscx160} {\\fscx}",
+            [" "] = "{\\fscx180} {\\fscx}",
             ["」"] = "」",
             ["・"] = "{\\alpha&HFF&}喵{\\alpha}",
         },
@@ -1163,7 +1176,7 @@ ksy_pandora = {
             ["！"] = "{\\fscx30} {\\fscx}!{\\fscx70} {\\fscx0}!{\\fscx}",
             ["…"] = "{\\alpha&HFF&}喵{\\alpha}",
             ["「"] = "「",
-            [" "] = "{\\fscx180} {\\fscx}",
+            [" "] = "{\\fscx200} {\\fscx}",
             ["」"] = "」",
             ["・"] = "{\\alpha&HFF&\\fscx72}喵{\\alpha\\fscx}",
         },
@@ -1198,7 +1211,7 @@ ksy_pandora = {
             ["！"] = "！",
             ["…"] = "…",
             ["「"] = "「",
-            [" "] = "{\\fscx180} {\\fscx}",
+            [" "] = "{\\fscx200} {\\fscx}",
             ["」"] = "」",
             ["・"] = "・",
         },
@@ -1306,15 +1319,14 @@ local function _callineleft(init)
     return _lineleft + (line.margin_l - line.margin_r) / 2
 end
 
-local function _getlineeffects()
+local function _getlineeffects(text)
+    text = text and text or line.text
     local _effects = ""
-    local _text = line.text
-    while re.match(_text, "^({[^}]+})") ~= nil do
-        _effects = _effects .. re.match(_text, "^({[^}]+})")[2]["str"]
-        _text = string.sub(_text, re.match(_text, "^({[^}]+})")[2]["last"] + 1)
+    for str, _, _ in re.gfind(text, "{.*?}") do
+        _effects = _effects .. str
     end
     _effects = re.sub(_effects, "\\\\an\\d", "")
-    _effects = re.sub(_effects, "\\{\\}", "")
+    _effects = re.sub(_effects, "{}", "")
     return _effects
 end
 
@@ -1445,6 +1457,78 @@ function ksy_time()
     line.end_time = math.floor(end_time_fix / 10 + 0.5) * 10
 end
 
+ksy.elf = function(line, elfraws, elfindex)
+    local styleref = line.styleref
+    local command_index = elfraws[elfindex]["first"]
+    return {
+        furi = function(num, text, fsc, fsp)
+            if config.JPN_only ~= true and ksy_pandora[styleref.fontname]["JPN_only"] ~= nil then
+                return nil
+            end
+            text = text and text or num
+            num = tonumber(num) and num or ksy.len(num)
+            fsc = tonumber(fsc) and fsc or 100
+            fsp = tonumber(fsp) and fsp or 0
+            local befores = string.sub(line.text, 1, command_index - 1) .. "}"
+            befores = re.sub(befores, "{.*?}", "")
+            local init = function()
+                local gjpqy = false
+                local autofsc = true
+                local minfsc = fsc
+                for _, elfraw in ipairs(elfraws) do
+                    local ame = ksy.func(elfraw["str"]).parse()
+                    local _length = tonumber(ame.args[1]) and tonumber(ame.args[1]) or ksy.len(ame.args[1])
+                    local _text = #ame.args >= 2 and ame.args[2] or ame.args[1]
+                    if re.find(_text, "[gjpqy]") ~= nil then
+                        gjpqy = true
+                    end
+                    if #ame.args > 2 then
+                        autofsc = false
+                    end
+                    if autofsc then
+                        local width = _calwidth(ksy.sub(
+                            re.sub(string.sub(line.text, 1, elfraw["first"] - 1) .. "}", "{.*?}", ""), -_length))
+                        local _width = _calwidth(_text) * ksy_pandora[styleref.fontname]["furigana"]["fscx"] * .01
+                        local _fsc = math.floor(width / _width * 100)
+                        if _fsc < minfsc then
+                            minfsc = _fsc
+                        end
+                    end
+                end
+                if autofsc then
+                    local width = _calwidth(ksy.sub(befores, -2))
+                    local _width = _calwidth(text) * ksy_pandora[styleref.fontname]["furigana"]["fscx"] * .01
+                    fsp = (width - _width) / (ksy.len(text) + 1)
+                    fsp = ksy.round(fsp, 1)
+                end
+                return gjpqy, minfsc
+            end
+            local gjpqy, minfsc = init()
+            local x = _callineleft() + _calwidth(befores) -
+                _calwidth(ksy.sub(befores, -num)) / 2
+            local y = meta.res_y - ksy.str(line.text_stripped, styleref).geth() -
+                (line.margin_t == 0 and styleref.margin_t or line.margin_t)
+            y = y + ksy_pandora[styleref.fontname]["furigana"]["Yoffset"]
+            if re.find(line.text, "\\\\an8") ~= nil then
+                y = meta.res_y - y + ksy_pandora[styleref.fontname]["furigana"]["Yoffset"] +
+                    ksy_pandora[styleref.fontname]["furigana"]["Yoffset2"]
+            elseif gjpqy then
+                y = y + ksy_pandora[styleref.fontname]["furigana"]["Yoffset3"]
+            end
+            text = ("%s{\\fsp}%s"):format(ksy.sub(text, 1, ksy.len(text) - 1), ksy.sub(text, -1))
+            return { characters["Basic"] .. ksy_effect(false) ..
+            ksy_character() .. _getlineeffects(string.sub(line.text, 1, command_index - 1) .. "}") ..
+            string.format(ksy_pandora[styleref.fontname]["furigana"]["content"],
+                re.find(line.text, "\\\\an8") ~= nil and "8" or "2",
+                minfsc * .01 *
+                (config.JPN_only == true and ksy_pandora[styleref.fontname]["JPN_only"]["fs"] or styleref.fontsize),
+                ksy_pandora[styleref.fontname]["furigana"]["fscx"] * styleref.scale_x * .01,
+                ksy_pandora[styleref.fontname]["furigana"]["fscy"] * styleref.scale_y * .01,
+                (fsp == 0 and "" or fsp), ksy.round(x, 1), ksy.round(y, 1), text) }
+        end,
+    }
+end
+
 function ksy_relocate(res)
     local relocates = { res }
     if orgline.styleref["align"] == 7 then
@@ -1452,12 +1536,22 @@ function ksy_relocate(res)
             relocates[i] = res
         end
     end
-    for i = 1, ksy.len(line.text_stripped) do
+    local in_eff = false
+    for i = 1, ksy.len(line.text) do
+        local char_cur = ksy.sub(line.text, i, 1)
+        if char_cur == "{" then
+            in_eff = true
+        elseif char_cur == "}" then
+            in_eff = false
+        end
+        if in_eff then
+            goto continue
+        end
         for search, relocate in pairs(ksy_pandora[line.styleref.fontname]["relocate"]) do
-            if ksy.sub(line.text_stripped, i, 1) == search then
-                local befores = ksy.sub(line.text_stripped, 1, i - 1)
-                local twidth, theight = _calwidth(befores),
-                    ksy.str(line.text_stripped, line.styleref).geth()
+            if char_cur == search then
+                local befores = ksy.sub(line.text, 1, i - 1)
+                befores = re.sub(befores, "{.*?}", "")
+                local twidth, theight = _calwidth(befores), ksy.str(line.text_stripped).geth()
                 local x = _callineleft() + twidth
                 if re.find(relocate["content"], "\\\\an5") ~= nil then
                     x = x + _calwidth(search) / 2
@@ -1476,54 +1570,26 @@ function ksy_relocate(res)
                 if re.find(line.text, "\\\\an8") ~= nil then
                     y = meta.res_y - y + relocate["Yoffset"] + relocate["Yoffset2"]
                 end
-                relocates[#relocates + 1] = characters["Basic"] .. ksy_effect(false) ..
-                    ksy_character() .. _getlineeffects() .. string.format(relocate["content"], x, y)
+                relocates[#relocates + 1] = characters["Basic"] ..
+                    ksy_effect(false) ..
+                    ksy_character() ..
+                    _getlineeffects(ksy.sub(line.text, 1, i - 1)) ..
+                    string.format(relocate["content"], x, y)
             end
         end
+        ::continue::
     end
-    local furiganas = re.find(line.text, "\\\\furi\\(\\d+,.+?\\)")
-    if config.JPN_only ~= true and ksy_pandora[line.styleref.fontname]["JPN_only"] ~= nil then
-        furiganas = nil
-    end
-    if furiganas ~= nil then
-        for _, part in pairs(furiganas) do
-            local befores, length, furigana, fsc, fsp = "", 0, "", 100, 0
-            part = string.sub(line.text, 1, part["first"] - 1) .. part["str"]
-            match = re.match(part, "\\\\furi\\((\\d+),([^\\)]+?)\\)$")
-            length = tonumber(match[2]["str"]) ~= nil and tonumber(match[2]["str"]) or 0
-            furigana = match[3]["str"]
-            if re.find(furigana, ",\\d+$") ~= nil then
-                match = re.match(furigana, "(.+),(\\d+)$")
-                furigana = match[2]["str"]
-                fsc = tonumber(match[3]["str"]) ~= nil and tonumber(match[3]["str"]) or 0
-                if re.find(furigana, ",\\d+$") ~= nil then
-                    match = re.match(furigana, "(.+),(\\d+)$")
-                    furigana = match[2]["str"]
-                    fsp = fsc
-                    fsc = tonumber(match[3]["str"]) ~= nil and tonumber(match[3]["str"]) or 0
+    local elfraws = re.find(line.text, "\\\\[^(]+\\([^)]*\\)")
+    if elfraws ~= nil then
+        for elfindex, elfraw in ipairs(elfraws) do
+            local ame = ksy.func(elfraw["str"]).parse()
+            local elf = ksy.elf(line, elfraws, elfindex)
+            if elf[ame.func] ~= nil then
+                local elf_lines = elf[ame.func](unpack(ame.args))
+                if elf_lines then
+                    ksy.table(relocates).add(unpack(elf_lines))
                 end
             end
-            befores = re.sub(part .. "}", "\\{.+?\\}", "")
-            local x = _callineleft() + _calwidth(befores) -
-                _calwidth(ksy.sub(befores, ksy.len(befores) - length + 1, length)) / 2
-            local y = meta.res_y - ksy.str(line.text_stripped, line.styleref).geth() -
-                (line.margin_t == 0 and line.styleref.margin_t or line.margin_t)
-            y = y + ksy_pandora[line.styleref.fontname]["furigana"]["Yoffset"]
-            if re.find(line.text, "\\\\an8") ~= nil then
-                y = meta.res_y - y + ksy_pandora[line.styleref.fontname]["furigana"]["Yoffset"] +
-                    ksy_pandora[line.styleref.fontname]["furigana"]["Yoffset2"]
-            elseif re.find(furigana, "[gjpqy]") ~= nil then
-                y = y + ksy_pandora[line.styleref.fontname]["furigana"]["Yoffset3"]
-            end
-            relocates[#relocates + 1] = characters["Basic"] .. ksy_effect(false) ..
-                ksy_character() .. _getlineeffects() ..
-                string.format(ksy_pandora[line.styleref.fontname]["furigana"]["content"],
-                    re.find(line.text, "\\\\an8") ~= nil and "8" or "2",
-                    (fsc == 0 and 100 or fsc) * .01 *
-                    (config.JPN_only == true and ksy_pandora[line.styleref.fontname]["JPN_only"]["fs"] or line.styleref.fontsize),
-                    ksy_pandora[line.styleref.fontname]["furigana"]["fscx"] * line.styleref.scale_x * .01,
-                    ksy_pandora[line.styleref.fontname]["furigana"]["fscy"] * line.styleref.scale_y * .01,
-                    (fsp == 0 and "" or fsp), x, y, furigana)
         end
     end
     if orgline.styleref["align"] == 7 and orgline.actor ~= "" then
