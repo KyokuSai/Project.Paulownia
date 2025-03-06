@@ -501,8 +501,8 @@ ksy = {
     shape = function(shape)
         local points, commands = {}, {}
         if type(shape) == "table" then
-            points = shape.points
-            commands = shape.commands
+            points = ksy.copy(shape.points)
+            commands = ksy.copy(shape.commands)
         else
             local tokens = {}
             for token in string.gmatch(shape, "%S+") do
@@ -698,6 +698,41 @@ ksy = {
                     points[i] = { x = x, y = y }
                 end
                 return ksy.shape({ commands = commands, points = points })
+            end,
+            reset = function(an) --[[平移至坐标原点]]
+                local xmin, xmax, ymin, ymax = points[1].x, points[1].x, points[1].y, points[1].y
+                for i = 2, #points do
+                    local _x, _y = points[i].x, points[i].y
+                    if _x > xmax then
+                        xmax = _x
+                    elseif _x < xmin then
+                        xmin = _x
+                    end
+                    if _y > ymax then
+                        ymax = _y
+                    elseif _y < ymin then
+                        ymin = _y
+                    end
+                end
+                local middle, center = (ymax + ymin) / 2, (xmax + xmin) / 2
+                local x, y
+                if ksy.table({ 1, 4, 7 }).contains(an) then
+                    x = xmin
+                elseif ksy.table({ 2, 5, 8 }).contains(an) then
+                    x = center
+                elseif ksy.table({ 3, 6, 9 }).contains(an) then
+                    x = xmax
+                end
+                if ksy.table({ 1, 2, 3 }).contains(an) then
+                    y = ymax
+                elseif ksy.table({ 4, 5, 6 }).contains(an) then
+                    y = middle
+                elseif ksy.table({ 7, 8, 9 }).contains(an) then
+                    y = ymin
+                end
+                return ksy.shape({ commands = commands, points = points }).filter(function(_x, _y)
+                    return _x - x, _y - y
+                end)
             end,
             rotate = function(center_x, center_y, theta1, theta2, theta3) --[[旋转绘图]]
                 return ksy.shape(shape).filter(function(x, y)
@@ -1498,8 +1533,9 @@ ksy.elf = function(line, elfraws, elfindex)
                 if autofsc then
                     local width = _calwidth(ksy.sub(befores, -2))
                     local _width = _calwidth(text) * ksy_pandora[styleref.fontname]["furigana"]["fscx"] * .01
-                    fsp = (width - _width) / (ksy.len(text) + 1)
+                    fsp = (_width - width) / (ksy.len(text) + 1)
                     fsp = ksy.round(fsp, 1)
+                    fsp = math.max(fsp, 0)
                 end
                 return gjpqy, minfsc
             end
