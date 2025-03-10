@@ -458,6 +458,13 @@ ksy = {
                 end
                 return ksy.table(tbl)
             end,
+            plus = function(value, ...) --[[拼接]]
+                for i = select("#", value, ...), 1, -1 do
+                    local _value = select(i, value, ...)
+                    table.move(_value, 1, #_value, #tbl + 1, tbl)
+                end
+                return ksy.table(tbl)
+            end,
             reverse = function() --[[反转]]
                 local reversed = {}
                 for i = #tbl, 1, -1 do
@@ -771,6 +778,11 @@ ksy = {
                 _separate_moves()
                 _separate_domains(precision)
                 return { out = _out2 }
+            end,
+            toline = function()
+                commands = ksy.table(commands).copy().removeAt(1).reverse().insert(1, "m").plus(commands).value
+                points = ksy.table(points).copy().reverse().plus(points).value
+                return ksy.shape({ commands = commands, points = points })
             end,
             out = _out1,
         }
