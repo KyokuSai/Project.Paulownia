@@ -1582,9 +1582,10 @@ ksy.elf = function(line, elfraws, elfindex)
                     end
                 end
                 if autofsc then
-                    local width = _calwidth(ksy.sub(befores, -2))
-                    local _width = _calwidth(text) * ksy_pandora[styleref.fontname]["furigana"]["fscx"] * .01
-                    fsp = (_width - width) / (ksy.len(text) + 1)
+                    local width = _calwidth(ksy.sub(befores, -num))
+                    local _width = _calwidth(text) * ksy_pandora[styleref.fontname]["furigana"]["fscx"] * .01 * minfsc *
+                    .01
+                    fsp = (width - _width) / (ksy.len(text) + 1)
                     fsp = ksy.round(fsp, 1)
                     fsp = math.max(fsp, 0)
                 end
