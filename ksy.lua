@@ -803,9 +803,13 @@ ksy = {
 
 function ksy_shuusei()
     if meta["language"] == "ENG" then
+        if line.styleref.name == "Sx-jp" then
+            return ""
+        end
         local res = characters["Basic"]
         res = res .. ksy_character()
         res = res .. orgline.text
+        ksy_layer()
         ksy_time()
         return res
     end
@@ -1366,10 +1370,7 @@ local function _calwidth(str)
     local width = ksy.str(str, styleref).getw()
     for _search, _replace in pairs(ksy_pandora[line.styleref.fontname]["contentrep"]) do
         if re.find(str, _search) ~= nil then
-            local _styleref = ksy.copy(line.styleref, 1)
-            if config.JPN_only == true then
-                _styleref.fontsize = ksy_pandora[line.styleref.fontname]["JPN_only"]["fs"]
-            end
+            local _styleref = ksy.copy(styleref, 1)
             local _width = 0
             for _part in re.gsplit(_replace, "\\{", true) do
                 match = re.match(_part, "\\\\fn(.+)\\}")
@@ -1381,12 +1382,12 @@ local function _calwidth(str)
                     _styleref.scale_x = tonumber(match[2]["str"]) ~= nil and tonumber(match[2]["str"]) or
                         _styleref.scale_x
                     if match[2]["str"] == "" then
-                        _styleref.scale_x = line.styleref.scale_x
+                        _styleref.scale_x = styleref.scale_x
                     end
                 end
                 _width = _width + ksy.str(re.sub(_part, ".+\\}", ""), _styleref).getw()
             end
-            width = width + (_width - ksy.str(_search, line.styleref).getw()) * #re.find(str, _search)
+            width = width + (_width - ksy.str(_search, styleref).getw()) * #re.find(str, _search)
         end
     end
     return width
@@ -1402,7 +1403,7 @@ local function _callineleft(init)
     end
     local _lineleft = 0
     _lineleft = (meta.res_x - _calwidth(line.text_stripped)) * .5
-    return _lineleft + (line.margin_l - line.margin_r) / 2
+    return _lineleft + (math.floor(line.margin_l) - math.floor(line.margin_r)) / 2
 end
 
 local function _getlineeffects(text)
@@ -1483,7 +1484,7 @@ function ksy_style()
 end
 
 function ksy_layer()
-    if line.styleref.name == "Sx-zh" then
+    if line.styleref.name == "Sx-zh" or line.styleref.name == "Sx-en" then
         line.layer = 1
     end
     if orgline.styleref["align"] == 7 and re.find(line.text_stripped, "\\\\N") ~= nil then
@@ -1584,7 +1585,7 @@ ksy.elf = function(line, elfraws, elfindex)
                 if autofsc then
                     local width = _calwidth(ksy.sub(befores, -num))
                     local _width = _calwidth(text) * ksy_pandora[styleref.fontname]["furigana"]["fscx"] * .01 * minfsc *
-                    .01
+                        .01
                     fsp = (width - _width) / (ksy.len(text) + 1)
                     fsp = ksy.round(fsp, 1)
                     fsp = math.max(fsp, 0)
