@@ -20,6 +20,7 @@ karaskel = require("karaskel")
 unicode = require("unicode")
 json = require("json")
 ffi = require("ffi")
+gseed = os.clock()
 pcall(function()
     ffi.cdef([[
 enum{CP_UTF8 = 65001};
@@ -276,6 +277,19 @@ ksy = {
         value = tonumber(value) or 0
         return precision and math.floor(value * 10 ^ precision + .5) / 10 ^ precision or math.floor(value + .5)
     end,
+    --[[@param seed string|number 种子]]
+    --[[@return integer]]
+    sign = function(seed) --[[随机±1]]
+        if seed == nil then
+            return math.random(2) * 2 - 3
+        end
+        local s = tostring(seed) .. gseed
+        local h = 2166136261
+        for i = 1, #s do
+            h = (h * 131 + s:byte(i)) % 4294967296
+        end
+        return (h % 2 == 0) and -1 or 1
+    end,
     --[[@param str string]]
     --[[@return ffi.cdata*]]
     utf8_to_utf16 = function(str)
@@ -305,7 +319,7 @@ ksy = {
             --[[@param fp_precision integer|nil 小数精度]]
             toshape = function(font_precision, fp_precision) --[[文字转绘图, 主要代码来自Yutils]]
                 font_precision = font_precision or 64
-                fp_precision = fp_precision or 2
+                fp_precision = fp_precision or 3
                 local resources_deleter
                 local dc = ffi.gc(ffi.C.CreateCompatibleDC(nil), function() resources_deleter() end)
                 ffi.C.SetMapMode(dc, ffi.C.MM_TEXT)
@@ -393,7 +407,25 @@ ksy = {
                     end
                 end
                 ffi.C.AbortPath(dc)
-                return ksy.shape(ksy.table(shape).join(" "))
+                local info = ksy.str(str, styleref).info()
+                local an = styleref.align
+                local middle, center = info.height / 2, info.width / 2
+                local x, y
+                if ksy.table({ 1, 4, 7 }).contains(an) then
+                    x = 0
+                elseif ksy.table({ 2, 5, 8 }).contains(an) then
+                    x = center
+                elseif ksy.table({ 3, 6, 9 }).contains(an) then
+                    x = info.width
+                end
+                if ksy.table({ 1, 2, 3 }).contains(an) then
+                    y = info.height
+                elseif ksy.table({ 4, 5, 6 }).contains(an) then
+                    y = middle
+                elseif ksy.table({ 7, 8, 9 }).contains(an) then
+                    y = 0
+                end
+                return ksy.shape(ksy.table(shape).join(" ")).move(-x, -y)
             end
         }
     end,
@@ -543,8 +575,26 @@ ksy = {
                 return ksy.table(ksy.copy(tbl, depth))
             end,
             --[[@param idx integer 进入索引]]
-            index = function(idx) --[[切换到指定索引的表]]
-                return ksy.table(tbl[idx])
+            --[[@param ... integer 进入索引]]
+            index = function(idx, ...) --[[切换到指定索引的表]]
+                local subTbl = tbl
+                for i = 1, select("#", idx, ...) do
+                    local _idx = select(i, idx, ...)
+                    _idx = _idx > 0 and _idx or #subTbl + _idx + 1
+                    subTbl[_idx] = subTbl[_idx] or {}
+                    subTbl = subTbl[_idx]
+                end
+                return ksy.table(subTbl)
+            end,
+            --[[@param new_tbl table 新表]]
+            edit = function(new_tbl) --[[修改表]]
+                for k in pairs(tbl) do
+                    tbl[k] = nil
+                end
+                for k, v in pairs(new_tbl) do
+                    tbl[k] = v
+                end
+                return ksy.table(tbl)
             end,
             value = tbl,
         }
@@ -809,11 +859,22 @@ ksy = {
                 end
                 return ksy.shape({ commands = commands, points = points })
             end,
-            --[[@param x number]]
-            --[[@param y number]]
+            --[[@param x number|nil]]
+            --[[@param y number|nil]]
             move = function(x, y) --[[平移]]
+                x = x or 0
+                y = y or 0
                 return ksy.shape({ commands = commands, points = points }).filter(function(_x, _y)
                     return _x + x, _y + y
+                end)
+            end,
+            --[[@param x number|nil]]
+            --[[@param y number|nil]]
+            fsc = function(x, y) --[[缩放]]
+                x = x or 1
+                y = y or 1
+                return ksy.shape({ commands = commands, points = points }).filter(function(_x, _y)
+                    return _x * x, _y * y
                 end)
             end,
             --[[@param an integer|nil 使用对齐]]
@@ -849,9 +910,7 @@ ksy = {
                 elseif ksy.table({ 7, 8, 9 }).contains(an) then
                     y = ymin
                 end
-                return ksy.shape({ commands = commands, points = points }).filter(function(_x, _y)
-                    return _x - x, _y - y
-                end)
+                return ksy.shape({ commands = commands, points = points }).move(-x, -y)
             end,
             reverse = function() --[[反向]]
                 commands = ksy.table(commands).removeAt(1).reverse().insert(1, "m").value
@@ -884,7 +943,7 @@ ksy = {
         }
     end,
     --[[@param s string|number 输入表达式]]
-    --[[@return string]]
+    --[[@return string|number]]
     eval = function(s) --[[解析表达式]]
         local f = load("return " .. s)
         return f and select(2, pcall(f)) or s
