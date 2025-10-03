@@ -198,19 +198,17 @@ ksy = {
         return x1, y1, z
     end,
     --[[@param r number 半径]]
-    --[[@return string]]
     circle = function(r) --[[贝塞尔圆]]
         local x = r * (2 ^ .5 - 1) * 4 / 3
         local c = string.format(
             "m 0 -%s b -%s -%s -%s -%s -%s 0 b -%s %s -%s %s 0 %s b %s %s %s %s %s 0 b %s -%s %s -%s 0 -%s ",
             r, x, r, r, x, r, r, x, x, r, r, x, r, r, x, r, r, x, x, r, r)
-        return c
+        return ksy.shape(c)
     end,
     --[[@param angles integer 角数量]]
     --[[@param majorAxis number 长轴长度]]
     --[[@param minorAxis number 短轴长度]]
     --[[@param frz number|nil 旋转角度]]
-    --[[@return string]]
     star = function(angles, majorAxis, minorAxis, frz) --[[等边半正凹多边形]]
         frz = frz or 0
         local points = ksy.table()
@@ -224,7 +222,7 @@ ksy = {
         end
         draw = "m " .. points.join(" l ")
         draw = ksy.rotate(draw, 0, 0, 0, 0, frz - 90)
-        return draw
+        return ksy.shape(draw)
     end,
     --[[@param x1 number]]
     --[[@param y1 number]]
