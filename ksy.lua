@@ -221,8 +221,7 @@ ksy = {
             points.add(string.format("%.2f %.2f", x, y))
         end
         draw = "m " .. points.join(" l ")
-        draw = ksy.rotate(draw, 0, 0, 0, 0, frz - 90)
-        return ksy.shape(draw)
+        return ksy.shape(draw).rotate(0, 0, 0, 0, frz - 90)
     end,
     --[[@param x1 number]]
     --[[@param y1 number]]
