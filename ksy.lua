@@ -12,6 +12,7 @@ unpack = _G.unpack
 os = _G.os
 require = _G.require
 load = _G.load
+assert = _G.assert
 re = require("re")
 string = require("string")
 table = require("table")
@@ -941,10 +942,12 @@ ksy = {
         }
     end,
     --[[@param s string|number 输入表达式]]
-    --[[@return string|number]]
+    --[[@return string|number|boolean]]
     eval = function(s) --[[解析表达式]]
         local f = load("return " .. s, "eval", "t", _G)
-        return f and select(2, pcall(f)) or s
+        if not f then return s end
+        local ok, res = pcall(f)
+        return ok and res or assert(false, res)
     end,
     --[[@param frame integer 帧数]]
     --[[@return integer]]
@@ -957,12 +960,14 @@ ksy = {
         local fixedstr = { str, ... }
         local result = ""
         return {
+            --[[@param istag boolean|nil 是否为标签内容]]
             --[[@return string]]
-            genEff = function() --[[生成效果字符串]]
+            genEff = function(istag) --[[生成效果字符串]]
+                istag = istag == nil and true or istag
                 for _, _str in ipairs(fixedstr) do
                     result = result .. ksy.eval(_str)
                 end
-                return result
+                return istag and result or "}" .. result .. "{"
             end,
             --[[@param dur_frame integer|nil 持续帧数]]
             --[[@param gap_frame integer|nil 间隔帧数]]
