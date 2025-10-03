@@ -124,7 +124,8 @@ ksy = {
             return ksy.sub(str, ksy.len(str) - (-start) + 1, (-start))
         end
         start = start - 1
-        if (length <= 0) then return "" end
+        if length == 0 then return "" end
+        length = length > 0 and length or ksy.len(str) + length
         local tmp = str
         local count = 0
         local byteCount = 0
@@ -945,7 +946,7 @@ ksy = {
     --[[@param s string|number 输入表达式]]
     --[[@return string|number]]
     eval = function(s) --[[解析表达式]]
-        local f = load("return " .. s)
+        local f = load("return " .. s, "eval", "t", _G)
         return f and select(2, pcall(f)) or s
     end,
     --[[@param frame integer 帧数]]
@@ -991,6 +992,7 @@ ksy = {
         }
     end,
 }
+_G.ksy = ksy
 
 --[[極彩花夢 - 正文字幕样式配置自动化]]
 --[[———————————————————————————————]]
@@ -1665,6 +1667,11 @@ function ksy_content()
         end
     end
     if effects ~= nil then
+        for _, effect in ipairs(effects) do
+            effect["str"] = re.sub(effect["str"], "![^!]+!", function(_eff)
+                return ksy.eval(ksy.sub(_eff, 2, -2))
+            end)
+        end
         content = re.sub(content, "\\{\\}", function()
             return table.remove(effects, 1)["str"]
         end)
