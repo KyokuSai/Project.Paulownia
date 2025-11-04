@@ -22,6 +22,11 @@ unicode = require("unicode")
 json = require("json")
 ffi = require("ffi")
 gseed = os.clock()
+_G.retime = retime
+_G.relayer = relayer
+_G.maxloop = maxloop
+_G.restyle = restyle
+_G.meta = meta
 pcall(function()
     ffi.cdef([[
 enum{CP_UTF8 = 65001};
@@ -230,16 +235,122 @@ ksy = {
     --[[@param y2 number]]
     --[[@return number]]
     deg = function(x1, y1, x2, y2) --[[相对角度]]
+        local dx, dy = x2 - x1, y2 - y1
+        return math.deg(math.atan2(dy, dx))
+    end,
+    --[[@param x1 number]]
+    --[[@param y1 number]]
+    --[[@param x2 number]]
+    --[[@param y2 number]]
+    --[[@return number]]
+    dist = function(x1, y1, x2, y2) --[[坐标距离]]
+        local dx, dy = x2 - x1, y2 - y1
+        return math.sqrt(dx * dx + dy * dy)
+    end,
+    extend = function(x1, y1, x2, y2, d)
         local dx = x2 - x1
         local dy = y2 - y1
-        local angle = math.atan2(dy, dx)
-        return math.deg(angle)
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len == 0 then return x2, y2 end
+        local ux = dx / len
+        local uy = dy / len
+        local x3 = x2 + ux * d
+        local y3 = y2 + uy * d
+        return x3, y3
+    end,
+    --[[@param x1 number]]
+    --[[@param y1 number]]
+    --[[@param x2 number]]
+    --[[@param y2 number]]
+    --[[@param x3 number]]
+    --[[@param y3 number]]
+    --[[@param x4 number]]
+    --[[@param y4 number]]
+    --[[@return number|boolean, number|boolean]]
+    intersect = function(x1, y1, x2, y2, x3, y3, x4, y4) --[[计算直线交点坐标]]
+        local denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if denom == 0 then
+            return false, false
+        end
+        local px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denom
+        local py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denom
+        return px, py
+    end,
+    --[[@param x1 number]]
+    --[[@param y1 number]]
+    --[[@param x2 number]]
+    --[[@param y2 number]]
+    --[[@param x3 number]]
+    --[[@param y3 number]]
+    --[[@param x4 number]]
+    --[[@param y4 number]]
+    --[[@return boolean]]
+    is_intersect = function(x1, y1, x2, y2, x3, y3, x4, y4) --[[判断线段是否相交]]
+        local eps = 1e-08
+        local o1 = (x2 - x1) * (y3 - y1) - (y2 - y1) * (x3 - x1)
+        local o2 = (x2 - x1) * (y4 - y1) - (y2 - y1) * (x4 - x1)
+        if o1 * o2 >= eps then return false end
+        local o3 = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)
+        local o4 = (x4 - x3) * (y2 - y3) - (y4 - y3) * (x2 - x3)
+        return o3 * o4 < eps
+    end,
+    is_notinbboxfast = function(xmin, ymin, xmax, ymax, x1, y1, x2, y2)
+        local eps = 1e-08
+        if x2 == nil then
+            return (x1 < xmin - eps or x1 > xmax + eps or
+                y1 < ymin - eps or y1 > ymax + eps)
+        end
+        return (math.max(x1, x2) < xmin - eps)
+            or (math.max(y1, y2) < ymin - eps)
+            or (math.min(x1, x2) > xmax + eps)
+            or (math.min(y1, y2) > ymax + eps)
+    end,
+    is_samedirection = function(x1, y1, x2, y2, x3, y3, x4, y4)
+        local v1x, v1y = x2 - x1, y2 - y1
+        local v2x, v2y = x4 - x3, y4 - y3
+        local len1 = math.sqrt(v1x * v1x + v1y * v1y)
+        local len2 = math.sqrt(v2x * v2x + v2y * v2y)
+        if len1 < 1e-08 or len2 < 1e-08 then return nil end
+        local dot = v1x * v2x + v1y * v2y
+        local cosv = dot / (len1 * len2)
+        if cosv > 0.99 then
+            return true
+        elseif cosv < -0.99 then
+            return false
+        else
+            return nil
+        end
     end,
     --[[@param e any]]
     --[[@return nil]]
     debug = function(e)
+        local function _sanitize(v, seen)
+            seen = seen or {}
+            local t = type(v)
+            if t == "nil" or t == "boolean" or t == "string" then
+                return v
+            elseif t == "number" then
+                if v ~= v then return "NaN" end
+                if v == math.huge then return "Infinity" end
+                if v == -math.huge then return "-Infinity" end
+                return v
+            elseif t == "table" then
+                if seen[v] then return "<circular>" end
+                seen[v] = true
+                local out = {}
+                for k, val in pairs(v) do
+                    local kk = (type(k) == "string" or type(k) == "number") and k or tostring(k)
+                    local ok, sv = pcall(_sanitize, val, seen)
+                    out[kk] = ok and sv or tostring(val)
+                end
+                return out
+            else
+                local ok, s = pcall(tostring, v)
+                return ok and s or ("<" .. t .. ">")
+            end
+        end
         if type(e) == "table" then
-            e = json.encode(e)
+            e = json.encode(_sanitize(e, {}))
         elseif e == nil then
             e = "nil"
         elseif e == true then
@@ -297,9 +408,12 @@ ksy = {
         ffi.C.MultiByteToWideChar(ffi.C.CP_UTF8, 0x0, str, -1, ws, wlen)
         return ws
     end,
-    --[[@param str string 输入字符串]]
+    --[[@param str string|function 输入字符串]]
     --[[@param styleref table|nil 输入样式表]]
     str = function(str, styleref)
+        if type(str) == "function" then
+            str = str()
+        end
         styleref = styleref or line.styleref
         return {
             info = function() --[[获取指定字符串的几何属性]]
@@ -466,10 +580,17 @@ ksy = {
                 end
                 return true
             end,
-            --[[@param separator string 用于拼接的字符串]]
+            --[[@param separator string|function 用于拼接的字符串]]
             --[[@return string]]
             join = function(separator) --[[转字符串]]
-                return table.concat(tbl, separator)
+                if type(separator) == "string" then
+                    return table.concat(tbl, separator)
+                end
+                local result = tbl[1]
+                for i = 2, #tbl do
+                    result = result .. separator() .. tbl[i]
+                end
+                return result
             end,
             dedup = function() --[[去重]]
                 local seen = {}
@@ -579,7 +700,7 @@ ksy = {
                 local subTbl = tbl
                 for i = 1, select("#", idx, ...) do
                     local _idx = select(i, idx, ...)
-                    _idx = _idx > 0 and _idx or #subTbl + _idx + 1
+                    _idx = _idx > 0 and _idx or (#subTbl + _idx + 1)
                     subTbl[_idx] = subTbl[_idx] or {}
                     subTbl = subTbl[_idx]
                 end
@@ -594,6 +715,25 @@ ksy = {
                     tbl[k] = v
                 end
                 return ksy.table(tbl)
+            end,
+            --[[@param filter function 处理函数，传入(shape,tbl,index,prev)输出shape]]
+            filter = function(filter) --[[对图形进行自定义处理]]
+                local prev = nil
+                for i = 1, #tbl do
+                    tbl[i], prev = filter(tbl[i], tbl, i, prev)
+                end
+                return ksy.table(tbl)
+            end,
+            --[[@param idx integer 索引]]
+            --[[@param ... integer 索引]]
+            at = function(idx, ...) --[[返回索引处的值]]
+                local result = {}
+                for i = 1, select("#", idx, ...) do
+                    local _idx = select(i, idx, ...)
+                    _idx = _idx > 0 and _idx or (#tbl + _idx + 1)
+                    table.insert(result, tbl[_idx])
+                end
+                return unpack(result)
             end,
             value = tbl,
         }
@@ -617,7 +757,17 @@ ksy = {
             partial = function(param, ...) --[[绑定参数]]
                 local fixedparams = { param, ... }
                 return function(...)
-                    func(unpack(fixedparams), ...)
+                    local args = { ... }
+                    local merged = {}
+                    local nfixed = #fixedparams
+                    for i = 1, nfixed do
+                        merged[i] = fixedparams[i]
+                    end
+                    local nargs = #args
+                    for i = 1, nargs do
+                        merged[nfixed + i] = args[i]
+                    end
+                    return func(unpack(merged, 1, nfixed + nargs))
                 end
             end,
             --[[@return any]]
@@ -647,11 +797,111 @@ ksy = {
             end,
         }
     end,
-    --[[@param shape string|table 传入绘图字符串/表]]
+    lazy = function(values)
+        return {
+            fix = function(name, value)
+                if not ksy.table(values).containsKey(name) then
+                    values[name] = value
+                end
+            end,
+            set = function(name, value)
+                values[name] = value
+            end,
+            get = function(name)
+                local result = values[name]
+                if type(result) == "function" then
+                    result = result()
+                    values[name] = result
+                end
+                return result
+            end,
+        }
+    end,
+    --[[@param x number 传入坐标]]
+    --[[@param y number 传入坐标]]
+    xy = function(x, y)
+        local function _arc(model, cx, cy, w, h, bend, deg, H, V)
+            local hw     = (w ~= 0) and (w * 0.5) or 1
+            local hh     = (h ~= 0) and (h * 0.5) or 1
+            local rad    = math.rad(deg or 0)
+            local c, s   = math.cos(rad), math.sin(rad)
+            local b      = ((bend or 0) / 100)
+            local hS     = (H or 0) / 100
+            local vS     = (V or 0) / 100
+
+            local dx, dy = x - cx, y - cy
+            local u0     = (c * dx + s * dy) / hw
+            local v0     = (-s * dx + c * dy) / hh
+
+            local u, v   = model(u0, v0, b, hw, hh)
+            local U2     = (u + hS * v0) * hw
+            local V2     = (v + vS * u0) * hh
+
+            local dx2    = c * U2 - s * V2
+            local dy2    = s * U2 + c * V2
+            return cx + dx2, cy + dy2
+        end
+        return {
+            arc = function(cx, cy, w, h, bend, deg, H, V)
+                return _arc(function(u0, v0, b, hw, hh)
+                    local ab = math.abs(b)
+                    if ab < 1e-08 then
+                        return u0, v0
+                    end
+
+                    local A  = ab * (math.pi / 2)
+                    local sA = math.sin(A)
+                    if sA == 0 then
+                        return u0, v0
+                    end
+                    local R   = hw / sA
+
+                    local ucl = (u0 > 1 and 1) or (u0 < -1 and -1) or u0
+                    local th  = ucl * A
+
+                    local r   = R + v0 * hh
+
+                    local U2  = r * math.sin(th)
+                    local C   = math.cos(th)
+                    local V2  = b < 0 and (R - r * C) or (r * C - R)
+
+                    local u   = U2 / hw
+                    local v   = V2 / hh
+                    return u, v
+                end, cx, cy, w, h, bend, deg, H, V)
+            end,
+            arch = function(cx, cy, w, h, bend, deg, H, V)
+                return _arc(function(u0, v0, b)
+                    local k = 1 - u0 * u0
+                    if k < 0 then k = 0 end
+                    local v = v0 + b * k
+                    return u0, v
+                end, cx, cy, w, h, bend, deg, H, V)
+            end,
+            arcul = function(cx, cy, w, h, bend, deg, H, V)
+                return _arc(function(u0, v0, b)
+                    local k = 1 - u0 * u0
+                    if k < 0 then k = 0 end
+                    local v = v0 * (1 + b * k)
+                    return u0, v
+                end, cx, cy, w, h, bend, deg, H, V)
+            end,
+        }
+    end,
+    --[[@param shape string|table|function 传入绘图字符串/表]]
     shape = function(shape)
         local points, commands = {}, {}
+        if type(shape) == "function" then
+            shape = shape()
+        end
         if type(shape) == "table" then
             points = ksy.copy(shape.points)
+            if shape.commands == nil then
+                shape.commands = { "m" }
+                for _ = 2, #points do
+                    ksy.table(shape.commands).add("l")
+                end
+            end
             commands = ksy.copy(shape.commands)
         else
             local tokens = {}
@@ -696,6 +946,9 @@ ksy = {
             end
             return ksy.table(_shape).join(" ")
         end
+        if type(shape) == "table" then
+            shape = _out(shape)
+        end
         --[[@param precision integer|nil 小数精度]]
         local _out1 = function(precision)
             return _out({ commands = commands, points = points }, precision)
@@ -709,25 +962,38 @@ ksy = {
             end
             return _shapes
         end
-        local function _calc_windings(vertex, move, precision) --[[计算环绕数]]
-            local _vertex, _commands, _points = ksy.copy(vertex), ksy.copy(move.commands), ksy.copy(move.points)
-            local x, y = _vertex.x, _vertex.y
-            local windings = 0
-            local xmin, xmax, ymin, ymax = _points[1].x, _points[1].x, _points[1].y, _points[1].y
-            for i = 2, #_points do
-                local _x, _y = _points[i].x, _points[i].y
+        local function _xMinMax()
+            local xmin, xmax = points[1].x, points[1].x
+            for i = 2, #points do
+                local _x = points[i].x
                 if _x > xmax then
                     xmax = _x
                 elseif _x < xmin then
                     xmin = _x
                 end
+            end
+            return xmin, xmax
+        end
+        local function _yMinMax()
+            local ymin, ymax = points[1].y, points[1].y
+            for i = 2, #points do
+                local _y = points[i].y
                 if _y > ymax then
                     ymax = _y
                 elseif _y < ymin then
                     ymin = _y
                 end
             end
-            if x < xmin or x > xmax or y > ymax then
+            return ymin, ymax
+        end
+        local function _calc_windings(vertex, move, tolerance, maxdepth) --[[计算环绕数]]
+            move = ksy.shape(move)
+            local _vertex, _commands, _points = ksy.copy(vertex), ksy.copy(move.commands), ksy.copy(move.points)
+            local x, y = _vertex.x, _vertex.y
+            local windings = 0
+            local eps = 1e-08
+            local xmin, _, xmax, ymax = move.xyMinMax()
+            if x < xmin - eps or x > xmax + eps or y > ymax + eps then
                 return windings
             end
             for i = 1, #_commands do
@@ -745,28 +1011,19 @@ ksy = {
                     local _bezier = ksy.shape(("m %s %s b %s %s %s %s %s %s"):format(_points[i - 1].x, _points[i - 1].y,
                         _points[i].x, _points[i].y, _points[i + 1].x, _points[i + 1].y, _points[i + 2].x, _points[i + 2]
                         .y))
-                    local __commands = {}
-                    local __points = {}
-                    ksy.table(__commands).add("m")
-                    ksy.table(__points).add({ x = _points[i - 1].x, y = _points[i - 1].y })
-                    for _t = 1, precision do
-                        local _x, _y = _bezier.bezier(_t / precision)
-                        ksy.table(__commands).add("l")
-                        ksy.table(__points).add({ x = _x, y = _y })
-                    end
                     windings = windings +
-                        _calc_windings(_vertex, { commands = __commands, points = __points }, precision)
+                        _calc_windings(_vertex, _bezier.bezier2line(tolerance, maxdepth).out(), tolerance, maxdepth)
                 else
                     local x1, y1 = _points[i - 1].x, _points[i - 1].y
                     local x2, y2 = _points[i].x, _points[i].y
-                    if x < math.min(x1, x2) or x > math.max(x1, x2) then
+                    if x < math.min(x1, x2) - eps or x > math.max(x1, x2) + eps or y > math.max(y1, y2) + eps then
                         goto continue
                     end
                     local y0 = y1 + (y2 - y1) * (x - x1) / (x2 - x1)
-                    if y0 >= y then
-                        if x == math.min(x1, x2) then
+                    if y0 > y - eps then
+                        if math.abs(x - math.min(x1, x2)) < eps then
                             windings = windings + (x2 > x1 and 1 or -1)
-                        elseif x == math.max(x1, x2) then
+                        elseif math.abs(x - math.max(x1, x2)) < eps then
                             windings = windings + 0
                         else
                             windings = windings + (x2 > x1 and 1 or -1)
@@ -793,28 +1050,29 @@ ksy = {
                 end
             end
         end
-        local function _separate_domains(precision) --[[分离连通域]]
-            local _intersects = {}
+        local function _separate_domains(tolerance, maxdepth) --[[分离连通域]]
+            local _intersections = {}
             for i, move in ipairs(moves) do
-                _intersects[i] = {}
+                _intersections[i] = {}
                 local _vertex = move.points[1]
                 for _i, _move in ipairs(moves) do
                     if i == _i then
                         goto continue
                     end
-                    if _calc_windings(_vertex, _move, precision) ~= 0 then
-                        ksy.table(_intersects[i]).add(_i)
+                    if _calc_windings(_vertex, _move, tolerance, maxdepth) ~= 0 then
+                        ksy.table(_intersections[i]).add(_i)
                     end
                     ::continue::
                 end
             end
             local removeindices = {}
             for i, move in ipairs(moves) do
-                if #_intersects[i] % 2 == 0 then
+                if #_intersections[i] % 2 == 0 then
                     goto continue
                 end
-                for _, index in ipairs(_intersects[i]) do
-                    if #_intersects[index] == #_intersects[i] - 1 and ksy.table(_intersects[index]).contains(unpack(ksy.table(_intersects[i]).copy().remove(index).value)) then
+                for _, index in ipairs(_intersections[i]) do
+                    if #_intersections[index] == #_intersections[i] - 1 and
+                        ksy.table(_intersections[index]).contains(unpack(ksy.table(_intersections[i]).copy().remove(index).value)) then
                         ksy.table(moves[index].commands).add(unpack(move.commands))
                         ksy.table(moves[index].points).add(unpack(move.points))
                         ksy.table(removeindices).add(i)
@@ -826,6 +1084,43 @@ ksy = {
             ksy.table(moves).removeAt(unpack(removeindices))
         end
         return {
+            height = (function(...)
+                local a, b = ...
+                return b - a
+            end)(_yMinMax()),
+            width = (function(...)
+                local a, b = ...
+                return b - a
+            end)(_xMinMax()),
+            middle = (function(...)
+                local a, b = ...
+                return (a + b) / 2
+            end)(_yMinMax()),
+            center = (function(...)
+                local a, b = ...
+                return (a + b) / 2
+            end)(_xMinMax()),
+            commands = commands,
+            points = points,
+            moves = moves,
+            --[[@return number,number,number,number]]
+            xyMinMax = function()
+                local xmin, xmax, ymin, ymax = points[1].x, points[1].x, points[1].y, points[1].y
+                for i = 2, #points do
+                    local _x, _y = points[i].x, points[i].y
+                    if _x > xmax then
+                        xmax = _x
+                    elseif _x < xmin then
+                        xmin = _x
+                    end
+                    if _y > ymax then
+                        ymax = _y
+                    elseif _y < ymin then
+                        ymin = _y
+                    end
+                end
+                return xmin, ymin, xmax, ymax
+            end,
             --[[@param t number 指定参数]]
             --[[@return number,number]]
             bezier = function(t) --[[计算贝塞尔曲线在参数t处的值]]
@@ -842,18 +1137,90 @@ ksy = {
                 local pY = uuu * y1 + 3 * uu * t * y2 + 3 * u * tt * y3 + ttt * y4
                 return pX, pY
             end,
+            bezier2line = function(tolerance, maxdepth)
+                local function _point_to_seg_dist(px, py, x1, y1, x2, y2)
+                    local vx, vy = x2 - x1, y2 - y1
+                    local wx, wy = px - x1, py - y1
+                    local vv = vx * vx + vy * vy
+                    if vv == 0 then
+                        return ksy.dist(px, py, x1, y1)
+                    end
+                    local t = (wx * vx + wy * vy) / vv
+                    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+                    local projx, projy = x1 + t * vx, y1 + t * vy
+                    return ksy.dist(px, py, projx, projy)
+                end
+                tolerance = tolerance or 4e-01
+                maxdepth = maxdepth or 8
+                shape = shape:gsub("%S+ %S+ b", function(b)
+                    return (b:sub(1, -2)):rep(2) .. "b"
+                end)
+                shape = shape:gsub("%S+ %S+ b %S+ %S+ %S+ %S+ %S+ %S+", function(b)
+                    b = "m " .. b
+                    local result = ""
+                    local stack = { { 0.0, 1.0, 0 } }
+                    while #stack > 0 do
+                        local node = table.remove(stack)
+                        local t0, t1, depth = node[1], node[2], node[3]
+                        local ax, ay = ksy.shape(b).bezier(t0)
+                        local bx, by = ksy.shape(b).bezier(t1)
+                        local tm = 0.5 * (t0 + t1)
+                        local mx, my = ksy.shape(b).bezier(tm)
+                        local d = _point_to_seg_dist(mx, my, ax, ay, bx, by)
+                        if d <= tolerance or depth >= maxdepth then
+                            result = ("%s l %s %s"):format(result, bx, by)
+                        else
+                            table.insert(stack, { tm, t1, depth + 1 })
+                            table.insert(stack, { t0, tm, depth + 1 })
+                        end
+                    end
+                    return result
+                end)
+                return ksy.shape(shape)
+            end,
+            windings = function(x, y, tolerance, maxdepth)
+                precision = precision or 50
+                return _calc_windings({ x = x, y = y }, shape, tolerance, maxdepth)
+            end,
             --[[@param x number 目标坐标]]
             --[[@param y number 目标坐标]]
-            --[[@param precision integer 计算使用小数精度]]
+            --[[@param tolerance integer|nil]]
+            --[[@param maxdepth integer|nil]]
             --[[@return boolean]]
-            is_intersect = function(x, y, precision) --[[是否相交]]
-                precision = precision or 50
-                return _calc_windings({ x = x, y = y }, { commands = commands, points = points }, precision) == 0
+            is_intersect = function(x, y, tolerance, maxdepth) --[[是否相交]]
+                return ksy.shape(shape).windings(x, y, tolerance, maxdepth) ~= 0
             end,
-            --[[@param filter function 处理函数，传入(x,y)输出x,y]]
+            is_clockwise = function(tolerance, maxdepth)
+                return ksy.shape(shape).windings(points[1].x, points[1].y, tolerance, maxdepth) > 0
+            end,
+            --[[@param _shape string|table|function 传入绘图字符串/表]]
+            add = function(_shape)
+                _shape = ksy.shape(_shape)
+                local _commands, _points = _shape.commands, _shape.points
+                return ksy.shape({
+                    commands = ksy.table(commands).plus(_commands).value,
+                    points = ksy.table(points).plus(_points).value
+                })
+            end,
+            --[[@param d number 距离]]
+            dpoint = function(d)
+                local p1, p2 = points[1], points[2]
+                local dx, dy = p2.x - p1.x, p2.y - p1.y
+                local eps = 1e-08
+                if math.abs(dx) < eps and math.abs(dy) < eps then
+                    return { x = p1.x, y = p1.y }, { x = p2.x, y = p2.y },
+                        { x = p1.x, y = p1.y }, { x = p2.x, y = p2.y }
+                end
+                local L = math.sqrt(dx * dx + dy * dy)
+                local nx, ny = (-dy / L) * d, (dx / L) * d
+                return { x = p1.x + nx, y = p1.y + ny }, { x = p2.x + nx, y = p2.y + ny },
+                    { x = p1.x - nx, y = p1.y - ny }, { x = p2.x - nx, y = p2.y - ny }
+            end,
+            --[[@param filter function 处理函数，传入(x,y,shape)输出x,y]]
             filter = function(filter) --[[对图形进行自定义处理]]
+                local lazy = {}
                 for i, point in ipairs(points) do
-                    local x, y = filter(point.x, point.y)
+                    local x, y = filter(point.x, point.y, shape, lazy)
                     points[i] = { x = x, y = y }
                 end
                 return ksy.shape({ commands = commands, points = points })
@@ -879,20 +1246,7 @@ ksy = {
             --[[@param an integer|nil 使用对齐]]
             reset = function(an) --[[平移至坐标原点]]
                 an = an or 5
-                local xmin, xmax, ymin, ymax = points[1].x, points[1].x, points[1].y, points[1].y
-                for i = 2, #points do
-                    local _x, _y = points[i].x, points[i].y
-                    if _x > xmax then
-                        xmax = _x
-                    elseif _x < xmin then
-                        xmin = _x
-                    end
-                    if _y > ymax then
-                        ymax = _y
-                    elseif _y < ymin then
-                        ymin = _y
-                    end
-                end
+                local xmin, xmax, ymin, ymax = ksy.shape(shape).xyMinMax()
                 local middle, center = (ymax + ymin) / 2, (xmax + xmin) / 2
                 local x, y
                 if ksy.table({ 1, 4, 7 }).contains(an) then
@@ -926,12 +1280,55 @@ ksy = {
                     return ksy._rotate(x, y, 0, center_x, center_y, 0, theta1, theta2, theta3)
                 end)
             end,
-            --[[@param precision integer|nil]]
-            split = function(precision) --[[拆分连通域]]
-                precision = precision or 10
+            clockwise = function(anti, precision)
+                anti = (anti ~= nil) and anti or true
+                local is_clockwise = ksy.shape(shape).is_clockwise(precision)
+                local reverse = is_clockwise and not anti
+                if reverse then
+                    return ksy.shape(shape).reverse()
+                end
+                return ksy.shape(shape)
+            end,
+            --[[@param tolerance integer|nil]]
+            --[[@param maxdepth integer|nil]]
+            split = function(tolerance, maxdepth) --[[拆分连通域]]
                 _separate_moves()
-                _separate_domains(precision)
-                return { out = _out2 }
+                _separate_domains(tolerance, maxdepth)
+                return {
+                    out = _out2,
+                    bord = function(bord, anti, _tolerance, _maxdepth) --[[生成边框绘图]]
+                        _tolerance = _tolerance or 1
+                        _maxdepth = _maxdepth or 8
+                        moves = _out2().filter(
+                            function(_shape)
+                                _shape = ksy.shape(_shape).clockwise(anti).bezier2line(_tolerance, _maxdepth)
+                                xmin, ymin, xmax, ymax = _shape.xyMinMax()
+                                _shape = string.gsub(_shape.out(), "m [^m]+%d", function(m)
+                                    m = ksy.shape(m)
+                                    m = m.add({ commands = { "l" }, points = { m.points[2] } })
+                                    local xys = ksy.table()
+                                    for i = 1, #m.points - 2 do
+                                        local p1, p2 = m.points[i], m.points[i + 1]
+                                        if ksy.dist(p1.x, p1.y, p2.x, p2.y) < _tolerance then
+                                            goto skip
+                                        end
+                                        local _, _, p1b, p2b = ksy.shape({ points = { p1, p2 } }).dpoint(bord)
+                                        xys.add(p1b, p2b)
+                                        ::skip::
+                                    end
+                                    local _commands, _points = ksy.table({ "m" }), ksy.table({ xys.at(1) })
+                                    xys.add(xys.at(1), xys.at(2))
+                                    for i = 1, #xys.value - 2, 2 do
+                                        _commands.add("l", "l")
+                                        _points.add(xys.at(i + 1, i + 2))
+                                    end
+                                    return ksy.shape({ commands = _commands.value, points = _points.value }).out()
+                                end)
+                                return ksy.shape(_shape)
+                            end).value
+                        return { out = _out2 }
+                    end,
+                }
             end,
             toline = function() --[[绘图转路径]]
                 commands = ksy.table(commands).copy().removeAt(1).reverse().insert(1, "m").plus(commands).value
@@ -944,6 +1341,8 @@ ksy = {
     --[[@param s string|number 输入表达式]]
     --[[@return string|number|boolean]]
     eval = function(s) --[[解析表达式]]
+        _G.line = line
+        _G.orgline = orgline
         local f = load("return " .. s, "eval", "t", _G)
         if not f then return s end
         local ok, res = pcall(f)
@@ -1757,8 +2156,8 @@ function ksy_time()
     local end_frame = aegisub.frame_from_ms(end_time)
     local start_time_fix = aegisub.ms_from_frame(start_frame)
     local end_time_fix = aegisub.ms_from_frame(end_frame)
-    line.start_time = math.floor(start_time_fix / 10 + 0.5) * 10
-    line.end_time = math.floor(end_time_fix / 10 + 0.5) * 10
+    line.start_time = math.floor(start_time_fix / 10 + .5) * 10
+    line.end_time = math.floor(end_time_fix / 10 + .5) * 10
 end
 
 ksy.elf = function(line, elfraws, elfindex)
