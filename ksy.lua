@@ -85,6 +85,11 @@ size_t wcslen(const wchar_t*);
 ]])
 
 ksy = {
+    t1 = "\x7D",
+    t2 = "\x7B",
+    fdur = function(n)
+        return aegisub.ms_from_frame(aegisub.frame_from_ms(line.start_time) + n) - line.start_time
+    end,
     --[[@param str string HEX(#FA4276)或ASS(&H7642FA&)颜色代码]]
     --[[@return string]]
     c2c = function(str) --[[HEX颜色代码与ASS颜色代码互转]]
@@ -677,9 +682,13 @@ ksy = {
             --[[@param value table 目标表]]
             --[[@param ... table 目标表]]
             plus = function(value, ...) --[[拼接表]]
-                for i = select("#", value, ...), 1, -1 do
+                local k = #tbl
+                for i = 1, select("#", value, ...) do
                     local _value = select(i, value, ...)
-                    table.move(_value, 1, #_value, #tbl + 1, tbl)
+                    for j = 1, #_value do
+                        k = k + 1
+                        tbl[k] = _value[j]
+                    end
                 end
                 return ksy.table(tbl)
             end,
@@ -717,7 +726,7 @@ ksy = {
                 return ksy.table(tbl)
             end,
             --[[@param filter function 处理函数，传入(shape,tbl,index,prev)输出shape]]
-            filter = function(filter) --[[对图形进行自定义处理]]
+            filter = function(filter) --[[对绘图进行自定义处理]]
                 local prev = nil
                 for i = 1, #tbl do
                     tbl[i], prev = filter(tbl[i], tbl, i, prev)
@@ -1179,7 +1188,6 @@ ksy = {
                 return ksy.shape(shape)
             end,
             windings = function(x, y, tolerance, maxdepth)
-                precision = precision or 50
                 return _calc_windings({ x = x, y = y }, shape, tolerance, maxdepth)
             end,
             --[[@param x number 目标坐标]]
@@ -1187,11 +1195,44 @@ ksy = {
             --[[@param tolerance integer|nil]]
             --[[@param maxdepth integer|nil]]
             --[[@return boolean]]
-            is_intersect = function(x, y, tolerance, maxdepth) --[[是否相交]]
+            is_intersect = function(x, y, tolerance, maxdepth) --[[点是否与绘图相交]]
                 return ksy.shape(shape).windings(x, y, tolerance, maxdepth) ~= 0
             end,
+            intersect = function(x1, y1, x2, y2, single) --[[线段与简单绘图交点]]
+                single = (single == nil) and true or single
+                local _shape = ksy.shape(shape)
+                local xmin, ymin, xmax, ymax = _shape.xyMinMax()
+                if ksy.is_notinbboxfast(xmin, ymin, xmax, ymax, x1, y1, x2, y2) then
+                    return false
+                end
+                local _points = _shape.points
+                local intersections = ksy.table()
+                for i = 1, #_points - 1 do
+                    if ksy.is_intersect(x1, y1, x2, y2, _points[i].x, _points[i].y, _points[i + 1].x, _points[i + 1].y) then
+                        local px, py = ksy.intersect(x1, y1, x2, y2, _points[i].x, _points[i].y, _points[i + 1].x,
+                            _points[i + 1].y)
+                        if single then
+                            return { x = px, y = py, i = i }
+                        end
+                        intersections.add({ x = px, y = py, i = i })
+                    end
+                end
+                if #intersections.value == 0 then
+                    return false
+                end
+                return intersections
+            end,
             is_clockwise = function(tolerance, maxdepth)
-                return ksy.shape(shape).windings(points[1].x, points[1].y, tolerance, maxdepth) > 0
+                local _shape = ksy.shape(shape).close().bezier2line(tolerance, maxdepth)
+                local _points = _shape.points
+                local sum = 0
+                for i = 1, #_points do
+                    local j = (i % #_points) + 1
+                    local xi, yi = _points[i].x, _points[i].y
+                    local xj, yj = _points[j].x, _points[j].y
+                    sum = sum + (xi * yj - xj * yi)
+                end
+                return sum < 0
             end,
             --[[@param _shape string|table|function 传入绘图字符串/表]]
             add = function(_shape)
@@ -1217,7 +1258,7 @@ ksy = {
                     { x = p1.x - nx, y = p1.y - ny }, { x = p2.x - nx, y = p2.y - ny }
             end,
             --[[@param filter function 处理函数，传入(x,y,shape)输出x,y]]
-            filter = function(filter) --[[对图形进行自定义处理]]
+            filter = function(filter) --[[对绘图进行自定义处理]]
                 local lazy = {}
                 for i, point in ipairs(points) do
                     local x, y = filter(point.x, point.y, shape, lazy)
@@ -1246,7 +1287,7 @@ ksy = {
             --[[@param an integer|nil 使用对齐]]
             reset = function(an) --[[平移至坐标原点]]
                 an = an or 5
-                local xmin, xmax, ymin, ymax = ksy.shape(shape).xyMinMax()
+                local xmin, ymin, xmax, ymax = ksy.shape(shape).xyMinMax()
                 local middle, center = (ymax + ymin) / 2, (xmax + xmin) / 2
                 local x, y
                 if ksy.table({ 1, 4, 7 }).contains(an) then
@@ -1280,14 +1321,140 @@ ksy = {
                     return ksy._rotate(x, y, 0, center_x, center_y, 0, theta1, theta2, theta3)
                 end)
             end,
-            clockwise = function(anti, precision)
-                anti = (anti ~= nil) and anti or true
+            declose = function()
+                _separate_moves()
+                local _shapes = ksy.table()
+                for _, move in ipairs(moves) do
+                    ksy.table(move.commands).removeAt(-1)
+                    ksy.table(move.points).removeAt(-1)
+                    _shapes.add(_out(move))
+                end
+                return ksy.shape(_shapes.join(" "))
+            end,
+            close = function()
+                _separate_moves()
+                local _shapes = ksy.table()
+                for _, move in ipairs(moves) do
+                    _shapes.add(_out(move))
+                end
+                return ksy.shape(_shapes.join(" "))
+            end,
+            --[[@param offset integer 偏移值]]
+            shiftM = function(offset) --[[调整起点]]
+                local _shape = ksy.shape(shape).declose()
+                local n = #_shape.points
+                offset = offset % n
+                local _points = {}
+                for i = 1, n do
+                    _points[i] = _shape.points[((i + offset - 1) % n) + 1]
+                end
+                return ksy.shape({ commands = _shape.commands, points = _points })
+            end,
+            --[[@param CW boolean|nil 绘图方向是否按顺时针]]
+            --[[@param precision integer|nil 小数精度]]
+            clockwise = function(CW, precision)
+                CW = (CW == nil) and true or CW
                 local is_clockwise = ksy.shape(shape).is_clockwise(precision)
-                local reverse = is_clockwise and not anti
-                if reverse then
+                if CW ~= is_clockwise then
                     return ksy.shape(shape).reverse()
                 end
                 return ksy.shape(shape)
+            end,
+            --[[@param bord number 边框像素宽度]]
+            --[[@param outlineOnly boolean|nil 是否镂空]]
+            --[[@param mode integer|nil 边框模式]]
+            --[[@param tolerance integer|nil]]
+            --[[@param maxdepth integer|nil]]
+            bord = function(bord, outlineOnly, mode, tolerance, maxdepth) --[[生成边框绘图]]
+                outlineOnly = (outlineOnly == nil) and true or outlineOnly
+                mode = mode or 1
+                tolerance = tolerance or 1
+                maxdepth = maxdepth or 8
+                _shape = ksy.shape(shape).bezier2line(tolerance, maxdepth).close()
+                xmin, ymin, xmax, ymax = _shape.xyMinMax()
+                _shape = string.gsub(_shape.out(), "m [^m]+%d", function(m)
+                    m = ksy.shape(m)
+                    local _m = m.add({ commands = { "l" }, points = { m.points[2] } })
+                    local xys = ksy.table()
+                    for i = 1, #_m.points - 2 do
+                        local p1, p2 = _m.points[i], _m.points[i + 1]
+                        if ksy.dist(p1.x, p1.y, p2.x, p2.y) < tolerance then
+                            goto skip
+                        end
+                        local _, _, p1b, p2b = ksy.shape({ points = { p1, p2 } }).dpoint(bord)
+                        xys.add(p1b, p2b)
+                        ::skip::
+                    end
+                    local _commands, _points = ksy.table({ "m" }), ksy.table({ xys.at(1) })
+                    xys.add(xys.at(1), xys.at(2), xys.at(3))
+                    for i = 1, #xys.value - 3, 2 do
+                        if mode == 1 then
+                            _commands.add("l", "l")
+                            _points.add(xys.at(i + 1, i + 2))
+                        elseif mode == 2 then
+                            local is_intersect = ksy.is_intersect(xys.at(i).x, xys.at(i).y, xys.at(i + 1).x,
+                                xys.at(i + 1).y,
+                                xys.at(i + 2).x, xys.at(i + 2).y, xys.at(i + 3).x, xys.at(i + 3).y)
+                            local px, py = ksy.intersect(xys.at(i).x, xys.at(i).y, xys.at(i + 1).x, xys.at(i + 1).y,
+                                xys.at(i + 2).x, xys.at(i + 2).y, xys.at(i + 3).x, xys.at(i + 3).y)
+                            if is_intersect then
+                                _commands.add("l")
+                                _points.add({ x = px, y = py })
+                            else
+                                _commands.add("l", "b", "b", "b")
+                                _points.add(xys.at(i + 1, i + 1))
+                                _points.add({ x = px, y = py }, xys.at(i + 2))
+                            end
+                        end
+                    end
+                    local outline = ksy.shape({ commands = _commands.value, points = _points.value })
+                    return (outlineOnly and outline.add(m.clockwise(not m.is_clockwise())) or outline).out()
+                end)
+                return ksy.shape(_shape)
+            end,
+            cutout = function(_shape, tolerance, maxdepth)
+                local shapeA = ksy.shape(shape).close().bezier2line(tolerance, maxdepth)
+                local shapeB = ksy.shape(_shape).close().bezier2line(tolerance, maxdepth)
+                if shapeA.is_clockwise() == shapeB.is_clockwise() then
+                    shapeB = shapeB.reverse()
+                end
+                local _offset = 0
+                for i = 1, #shapeA.commands do
+                    if shapeB.is_intersect(shapeA.points[i].x, shapeA.points[i].y) then
+                        _offset = _offset + 1
+                    else
+                        break
+                    end
+                end
+                shapeA = shapeA.shiftM(_offset)
+                local curline, curshape, isA, curindex = shapeA, shapeB, true, 1
+                points = ksy.table({ curline.points[1] })
+                for _ = 1, #shapeA.commands + #shapeB.commands do
+                    if isA and curindex == #shapeA.commands then
+                        break
+                    end
+                    local p = curshape.intersect(curline.points[curindex].x, curline.points[curindex].y,
+                        curline.points[curindex + 1].x, curline.points[curindex + 1].y)
+                    if p then
+                        points.add({ x = p.x, y = p.y }, {
+                            x = curshape.points[p.i + 1].x,
+                            y = curshape.points[p.i + 1]
+                                .y
+                        })
+                        curline = isA and shapeB or shapeA
+                        curshape = isA and shapeA or shapeB
+                        curindex = p.i + 1
+                        isA = not isA
+                    else
+                        points.add({ x = curline.points[curindex + 1].x, y = curline.points[curindex + 1].y })
+                        curindex = curindex + 1
+                    end
+                end
+                commands = { "m" }
+                for i = 2, #points.value do
+                    commands[i] = "l"
+                end
+                return ksy.shape({ commands = commands, points = points.value })
             end,
             --[[@param tolerance integer|nil]]
             --[[@param maxdepth integer|nil]]
@@ -1296,35 +1463,10 @@ ksy = {
                 _separate_domains(tolerance, maxdepth)
                 return {
                     out = _out2,
-                    bord = function(bord, anti, _tolerance, _maxdepth) --[[生成边框绘图]]
-                        _tolerance = _tolerance or 1
-                        _maxdepth = _maxdepth or 8
+                    bord = function(bord, outlineOnly, CW, _tolerance, _maxdepth) --[[生成边框绘图]]
                         moves = _out2().filter(
                             function(_shape)
-                                _shape = ksy.shape(_shape).clockwise(anti).bezier2line(_tolerance, _maxdepth)
-                                xmin, ymin, xmax, ymax = _shape.xyMinMax()
-                                _shape = string.gsub(_shape.out(), "m [^m]+%d", function(m)
-                                    m = ksy.shape(m)
-                                    m = m.add({ commands = { "l" }, points = { m.points[2] } })
-                                    local xys = ksy.table()
-                                    for i = 1, #m.points - 2 do
-                                        local p1, p2 = m.points[i], m.points[i + 1]
-                                        if ksy.dist(p1.x, p1.y, p2.x, p2.y) < _tolerance then
-                                            goto skip
-                                        end
-                                        local _, _, p1b, p2b = ksy.shape({ points = { p1, p2 } }).dpoint(bord)
-                                        xys.add(p1b, p2b)
-                                        ::skip::
-                                    end
-                                    local _commands, _points = ksy.table({ "m" }), ksy.table({ xys.at(1) })
-                                    xys.add(xys.at(1), xys.at(2))
-                                    for i = 1, #xys.value - 2, 2 do
-                                        _commands.add("l", "l")
-                                        _points.add(xys.at(i + 1, i + 2))
-                                    end
-                                    return ksy.shape({ commands = _commands.value, points = _points.value }).out()
-                                end)
-                                return ksy.shape(_shape)
+                                return ksy.shape(_shape).clockwise(CW).bord(bord, outlineOnly, _tolerance, _maxdepth)
                             end).value
                         return { out = _out2 }
                     end,
@@ -1382,6 +1524,28 @@ ksy = {
                 factor = factor or 1
                 local cur_frame = aegisub.frame_from_ms(line.start_time + start_time)
                 local end_frame = aegisub.frame_from_ms(line.start_time + end_time)
+                while cur_frame < end_frame do
+                    result = result .. "\\t(" .. ksy.frame2t(cur_frame) .. "," ..
+                        ksy.frame2t(cur_frame + dur_frame) ..
+                        "," .. ksy.eval(factor) .. "," .. ksy.eff(unpack(fixedstr)).genEff() .. ")"
+                    cur_frame = cur_frame + dur_frame + gap_frame
+                end
+                return result
+            end,
+            --[[@param dur_frame integer|nil 持续帧数]]
+            --[[@param gap_frame integer|nil 间隔帧数]]
+            --[[@param start_frame integer|nil 起始帧数]]
+            --[[@param end_frame integer|nil 结束帧数]]
+            --[[@param factor string|number|nil 速度系数(表达式)]]
+            --[[@return string]]
+            genAniF = function(dur_frame, gap_frame, start_frame, end_frame, factor) --[[生成往复动画]]
+                dur_frame = dur_frame or 1
+                gap_frame = gap_frame or 0
+                start_frame = start_frame or 0
+                end_frame = end_frame or (aegisub.frame_from_ms(line.end_time) - aegisub.frame_from_ms(line.start_time))
+                factor = factor or 1
+                local cur_frame = aegisub.frame_from_ms(line.start_time) + start_frame
+                end_frame = aegisub.frame_from_ms(line.start_time) + end_frame
                 while cur_frame < end_frame do
                     result = result .. "\\t(" .. ksy.frame2t(cur_frame) .. "," ..
                         ksy.frame2t(cur_frame + dur_frame) ..
