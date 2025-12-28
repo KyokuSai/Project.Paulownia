@@ -85,10 +85,26 @@ size_t wcslen(const wchar_t*);
 ]])
 
 ksy = {
-    t1 = "\x7D",
-    t2 = "\x7B",
-    fdur = function(n)
+    t1 = "\x7D", --[[方便使用花括号 } ]]
+    t2 = "\x7B", --[[方便使用花括号 { ]]
+    --[[@param n integer 帧数]]
+    --[[@return integer]]
+    fdur = function(n) --[[根据帧数获取时间长度]]
         return aegisub.ms_from_frame(aegisub.frame_from_ms(line.start_time) + n) - line.start_time
+    end,
+    --[[@return integer]]
+    flen = function() --[[当前行总帧数]]
+        return aegisub.frame_from_ms(line.end_time - line.start_time)
+    end,
+    --[[@param fstart integer|nil 开始帧数]]
+    --[[@param fend integer|nil 结束帧数]]
+    retime = function(fstart, fend) --[[修改行时间]]
+        fstart = fstart or 0
+        fend = fend or ksy.flen()
+        fstart = fstart < 0 and (ksy.flen() + fstart) or fstart
+        fend = fend < 0 and (ksy.flen() + fend) or fend
+        retime("preline", ksy.fdur(fstart), ksy.fdur(fend))
+        return ""
     end,
     --[[@param str string HEX(#FA4276)或ASS(&H7642FA&)颜色代码]]
     --[[@return string]]
@@ -208,12 +224,27 @@ ksy = {
         local y1 = x * sin_a + y * cos_a
         return x1, y1, z
     end,
+    --[[@param width number 宽度]]
+    --[[@param height number 高度]]
+    square = function(width, height) --[[矩形]]
+        return ksy.shape(("m 0 0 l 0 %s l %s %s l %s 0 l 0 0"):format(height, width, height, width))
+            .move(-width / 2, -height / 2)
+    end,
+    --[[@param length number 长度]]
+    --[[@param radius number 圆角高度]]
+    line = function(length, radius) --[[圆角线段]]
+        radius = radius / 2
+        local shape = ("m 0 -%s l %s -%s b %s -%s %s 0 %s 0 b %s %s %s %s %s %s l 0 %s b -%s %s -%s 0 -%s 0 b -%s -%s 0 -%s 0 -%s")
+            :format(radius, length, radius, length + radius, radius,
+                length + radius, length + radius, length + radius, radius, length, radius, length,
+                radius, radius, radius, radius, radius, radius, radius, radius, radius, radius)
+        return ksy.shape(shape)
+    end,
     --[[@param r number 半径]]
     circle = function(r) --[[贝塞尔圆]]
         local x = r * (2 ^ .5 - 1) * 4 / 3
-        local c = string.format(
-            "m 0 -%s b -%s -%s -%s -%s -%s 0 b -%s %s -%s %s 0 %s b %s %s %s %s %s 0 b %s -%s %s -%s 0 -%s ",
-            r, x, r, r, x, r, r, x, x, r, r, x, r, r, x, r, r, x, x, r, r)
+        local c = ("m 0 -%s b -%s -%s -%s -%s -%s 0 b -%s %s -%s %s 0 %s b %s %s %s %s %s 0 b %s -%s %s -%s 0 -%s")
+            :format(r, x, r, r, x, r, r, x, x, r, r, x, r, r, x, r, r, x, x, r, r)
         return ksy.shape(c)
     end,
     --[[@param angles integer 角数量]]
@@ -272,14 +303,19 @@ ksy = {
     --[[@param x4 number]]
     --[[@param y4 number]]
     --[[@return number|boolean, number|boolean]]
-    intersect = function(x1, y1, x2, y2, x3, y3, x4, y4) --[[计算直线交点坐标]]
-        local denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        if denom == 0 then
+    intersect = function(x1, y1, x2, y2, x3, y3, x4, y4, epsSin) --[[计算直线交点坐标]]
+        epsSin = epsSin or 1e-06
+        local dx1, dy1 = x1 - x2, y1 - y2
+        local dx2, dy2 = x3 - x4, y3 - y4
+        local denom = dx1 * dy2 - dy1 * dx2
+        local l1 = dx1 * dx1 + dy1 * dy1
+        local l2 = dx2 * dx2 + dy2 * dy2
+        if l1 == 0 or l2 == 0 or denom * denom <= (epsSin * epsSin) * l1 * l2 then
             return false, false
         end
-        local px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denom
-        local py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denom
-        return px, py
+        local c1 = x1 * y2 - y1 * x2
+        local c2 = x3 * y4 - y3 * x4
+        return (c1 * dx2 - dx1 * c2) / denom, (c1 * dy2 - dy1 * c2) / denom
     end,
     --[[@param x1 number]]
     --[[@param y1 number]]
@@ -733,6 +769,23 @@ ksy = {
                 end
                 return ksy.table(tbl)
             end,
+            fixshape = function() --[[重整一系列绘图的坐标]]
+                return ksy.table(tbl).filter(function(shape, _tbl, index, prev)
+                    shape = ksy.shape(shape)
+                    if index == 1 then
+                        local hmax = 0
+                        for i = 1, #_tbl do
+                            local h = ksy.shape(_tbl[i]).height
+                            if h > hmax or hmax == 0 then hmax = h end
+                        end
+                        return shape.move(0, hmax > shape.height and (shape.height - hmax) or 0).out(),
+                            table.pack(0, hmax)
+                    end
+                    local width = ksy.shape(_tbl[index - 1]).width
+                    return shape.move(-(width + prev[1]), shape.height - prev[2]).out(),
+                        table.pack(width + prev[1], prev[2])
+                end)
+            end,
             --[[@param idx integer 索引]]
             --[[@param ... integer 索引]]
             at = function(idx, ...) --[[返回索引处的值]]
@@ -743,6 +796,16 @@ ksy = {
                     table.insert(result, tbl[_idx])
                 end
                 return unpack(result)
+            end,
+            --[[@param func function]]
+            map = function(func) --[[遍历，传入(index,value)]]
+                for index, value in ipairs(tbl) do
+                    local result = func(index, value)
+                    if result ~= nil then
+                        tbl[index] = result
+                    end
+                end
+                return ksy.table(tbl)
             end,
             value = tbl,
         }
@@ -893,6 +956,27 @@ ksy = {
                     if k < 0 then k = 0 end
                     local v = v0 * (1 + b * k)
                     return u0, v
+                end, cx, cy, w, h, bend, deg, H, V)
+            end,
+            --[[@param bend number bend=100时1/4圆弧，bend=200时1/2圆弧]]
+            arcseg = function(cx, cy, w, h, bend, deg, H, V)
+                return _arc(function(u0, v0, b, hw, hh)
+                    local ab = math.abs(b)
+                    if ab < 1e-08 then return u0, v0 end
+                    local theta = ab * (math.pi / 2)
+                    if theta < 1e-08 then return u0, v0 end
+                    local ucl = (u0 > 1 and 1) or (u0 < -1 and -1) or u0
+                    local th = ucl * (theta * 0.5)
+                    local R = (2 * hw) / theta
+                    local r = R + v0 * hh
+                    local U2 = r * math.sin(th)
+                    local V2 = r * math.cos(th) - R
+                    if b < 0 then
+                        V2 = -V2
+                    end
+                    local u = U2 / hw
+                    local v = V2 / hh
+                    return u, v
                 end, cx, cy, w, h, bend, deg, H, V)
             end,
         }
@@ -1093,27 +1177,34 @@ ksy = {
             ksy.table(moves).removeAt(unpack(removeindices))
         end
         return {
-            height = (function(...)
-                local a, b = ...
-                return b - a
-            end)(_yMinMax()),
-            width = (function(...)
+            width = (function(...) --[[绘图宽度]]
                 local a, b = ...
                 return b - a
             end)(_xMinMax()),
-            middle = (function(...)
+            --[[@return number]]
+            height = (function(...) --[[绘图高度]]
                 local a, b = ...
-                return (a + b) / 2
+                return b - a
             end)(_yMinMax()),
-            center = (function(...)
+            --[[@return number]]
+            center = (function(...) --[[绘图x轴中点]]
                 local a, b = ...
                 return (a + b) / 2
             end)(_xMinMax()),
+            --[[@return number]]
+            middle = (function(...) --[[绘图y轴中点]]
+                local a, b = ...
+                return (a + b) / 2
+            end)(_yMinMax()),
+            --[[@return number]]
+            --[[@return table]]
             commands = commands,
+            --[[@return table]]
             points = points,
+            --[[@return table]]
             moves = moves,
             --[[@return number,number,number,number]]
-            xyMinMax = function()
+            xyMinMax = function() --[[xmin, ymin, xmax, ymax]]
                 local xmin, xmax, ymin, ymax = points[1].x, points[1].x, points[1].y, points[1].y
                 for i = 2, #points do
                     local _x, _y = points[i].x, points[i].y
@@ -1146,7 +1237,11 @@ ksy = {
                 local pY = uuu * y1 + 3 * uu * t * y2 + 3 * u * tt * y3 + ttt * y4
                 return pX, pY
             end,
-            bezier2line = function(tolerance, maxdepth)
+            --[[@param tolerance number|nil 容忍度/精确度，越低二分越细]]
+            --[[@param maxdepth number|nil 二分最深深度]]
+            bezier2line = function(tolerance, maxdepth) --[[将绘图中的贝塞尔曲线转换成线段]]
+                tolerance = tolerance or 4e-01
+                maxdepth = maxdepth or 8
                 local function _point_to_seg_dist(px, py, x1, y1, x2, y2)
                     local vx, vy = x2 - x1, y2 - y1
                     local wx, wy = px - x1, py - y1
@@ -1159,8 +1254,6 @@ ksy = {
                     local projx, projy = x1 + t * vx, y1 + t * vy
                     return ksy.dist(px, py, projx, projy)
                 end
-                tolerance = tolerance or 4e-01
-                maxdepth = maxdepth or 8
                 shape = shape:gsub("%S+ %S+ b", function(b)
                     return (b:sub(1, -2)):rep(2) .. "b"
                 end)
@@ -1187,6 +1280,45 @@ ksy = {
                 end)
                 return ksy.shape(shape)
             end,
+            line2bezier = function() --[[将绘图中的线段转换成贝塞尔曲线]]
+                local _commands, _points = ksy.table(), ksy.table()
+                for i = 1, #commands do
+                    if commands[i] == "l" then
+                        _commands.add("b", "b", "b")
+                        _points.add(points[i], points[i], points[i])
+                    else
+                        _commands.add(commands[i])
+                        _points.add(points[i])
+                    end
+                end
+                return ksy.shape({ commands = _commands.value, points = _points.value })
+            end,
+            --[[@param tolerance number|nil 容忍度/精确度，越低取样越细]]
+            --[[@param _tolerance number|nil bezier2line参数]]
+            --[[@param _maxdepth number|nil bezier2line参数]]
+            sampling = function(tolerance, _tolerance, _maxdepth) --[[将绘图转换成大量短线段]]
+                tolerance = tolerance or 1
+                local _shape = ksy.shape(shape).close().bezier2line(_tolerance, _maxdepth)
+                local _commands, _points = ksy.table({ "m" }), ksy.table({ _shape.points[1] })
+                for i = 2, #_shape.commands do
+                    if math.abs(_shape.points[i].x - _shape.points[i - 1].x) < tolerance
+                        and math.abs(_shape.points[i].y - _shape.points[i - 1].y) < tolerance then
+                        _commands.add("l")
+                        _points.add(_shape.points[i])
+                    else
+                        local n = math.ceil(math.max(math.abs(_shape.points[i].x - _shape.points[i - 1].x) / tolerance,
+                            math.abs(_shape.points[i].y - _shape.points[i - 1].y) / tolerance))
+                        for _i = 1, n - 1 do
+                            _commands.add("l")
+                            _points.add({
+                                x = _shape.points[i - 1].x + (_shape.points[i].x - _shape.points[i - 1].x) / n * _i,
+                                y = _shape.points[i - 1].y + (_shape.points[i].y - _shape.points[i - 1].y) / n * _i
+                            })
+                        end
+                    end
+                end
+                return ksy.shape({ commands = _commands.value, points = _points.value })
+            end,
             windings = function(x, y, tolerance, maxdepth)
                 return _calc_windings({ x = x, y = y }, shape, tolerance, maxdepth)
             end,
@@ -1198,6 +1330,11 @@ ksy = {
             is_intersect = function(x, y, tolerance, maxdepth) --[[点是否与绘图相交]]
                 return ksy.shape(shape).windings(x, y, tolerance, maxdepth) ~= 0
             end,
+            --[[@param x1 number]]
+            --[[@param y1 number]]
+            --[[@param x2 number]]
+            --[[@param y2 number]]
+            --[[@param single boolean|nil 是否只取一个交点]]
             intersect = function(x1, y1, x2, y2, single) --[[线段与简单绘图交点]]
                 single = (single == nil) and true or single
                 local _shape = ksy.shape(shape)
@@ -1221,18 +1358,6 @@ ksy = {
                     return false
                 end
                 return intersections
-            end,
-            is_clockwise = function(tolerance, maxdepth)
-                local _shape = ksy.shape(shape).close().bezier2line(tolerance, maxdepth)
-                local _points = _shape.points
-                local sum = 0
-                for i = 1, #_points do
-                    local j = (i % #_points) + 1
-                    local xi, yi = _points[i].x, _points[i].y
-                    local xj, yj = _points[j].x, _points[j].y
-                    sum = sum + (xi * yj - xj * yi)
-                end
-                return sum < 0
             end,
             --[[@param _shape string|table|function 传入绘图字符串/表]]
             add = function(_shape)
@@ -1271,18 +1396,14 @@ ksy = {
             move = function(x, y) --[[平移]]
                 x = x or 0
                 y = y or 0
-                return ksy.shape({ commands = commands, points = points }).filter(function(_x, _y)
-                    return _x + x, _y + y
-                end)
+                return ksy.shape(shape).filter(function(_x, _y) return _x + x, _y + y end)
             end,
-            --[[@param x number|nil]]
-            --[[@param y number|nil]]
+            --[[@param x number fscx]]
+            --[[@param y number|nil fscy]]
             fsc = function(x, y) --[[缩放]]
                 x = x or 1
-                y = y or 1
-                return ksy.shape({ commands = commands, points = points }).filter(function(_x, _y)
-                    return _x * x, _y * y
-                end)
+                y = y or x
+                return ksy.shape(shape).filter(function(_x, _y) return _x * x, _y * y end)
             end,
             --[[@param an integer|nil 使用对齐]]
             reset = function(an) --[[平移至坐标原点]]
@@ -1321,6 +1442,20 @@ ksy = {
                     return ksy._rotate(x, y, 0, center_x, center_y, 0, theta1, theta2, theta3)
                 end)
             end,
+            --[[@param xmin number]]
+            --[[@param xmax number]]
+            clampX = function(xmin, xmax) --[[横坐标归一化]]
+                return ksy.shape(shape).filter(function(x, y)
+                    return math.max(xmin, math.min(x, xmax)), y
+                end)
+            end,
+            --[[@param ymin number]]
+            --[[@param ymax number]]
+            clampY = function(ymin, ymax) --[[纵坐标归一化]]
+                return ksy.shape(shape).filter(function(x, y)
+                    return x, math.max(ymin, math.min(y, ymax))
+                end)
+            end,
             declose = function()
                 _separate_moves()
                 local _shapes = ksy.table()
@@ -1331,7 +1466,7 @@ ksy = {
                 end
                 return ksy.shape(_shapes.join(" "))
             end,
-            close = function()
+            close = function() --[[封闭绘图]]
                 _separate_moves()
                 local _shapes = ksy.table()
                 for _, move in ipairs(moves) do
@@ -1350,11 +1485,22 @@ ksy = {
                 end
                 return ksy.shape({ commands = _shape.commands, points = _points })
             end,
-            --[[@param CW boolean|nil 绘图方向是否按顺时针]]
-            --[[@param precision integer|nil 小数精度]]
-            clockwise = function(CW, precision)
+            is_clockwise = function() --[[绘图是否是顺时针CW]]
+                local _shape = ksy.shape(shape).close()
+                local _points = _shape.points
+                local sum = 0
+                for i = 1, #_points do
+                    local j = (i % #_points) + 1
+                    local xi, yi = _points[i].x, _points[i].y
+                    local xj, yj = _points[j].x, _points[j].y
+                    sum = sum + (xi * yj - xj * yi)
+                end
+                return sum < 0
+            end,
+            --[[@param CW boolean|nil 绘图方向是否要按顺时针]]
+            clockwise = function(CW) --[[将绘图转换成顺时针CW/逆时针CCW]]
                 CW = (CW == nil) and true or CW
-                local is_clockwise = ksy.shape(shape).is_clockwise(precision)
+                local is_clockwise = ksy.shape(shape).is_clockwise()
                 if CW ~= is_clockwise then
                     return ksy.shape(shape).reverse()
                 end
@@ -1362,15 +1508,13 @@ ksy = {
             end,
             --[[@param bord number 边框像素宽度]]
             --[[@param outlineOnly boolean|nil 是否镂空]]
-            --[[@param mode integer|nil 边框模式]]
+            --[[@param mode integer|nil 边框模式，1.直边，2.曲边]]
             --[[@param tolerance integer|nil]]
-            --[[@param maxdepth integer|nil]]
-            bord = function(bord, outlineOnly, mode, tolerance, maxdepth) --[[生成边框绘图]]
+            bord = function(bord, outlineOnly, mode, tolerance) --[[生成边框绘图]]
                 outlineOnly = (outlineOnly == nil) and true or outlineOnly
                 mode = mode or 1
-                tolerance = tolerance or 1
-                maxdepth = maxdepth or 8
-                _shape = ksy.shape(shape).bezier2line(tolerance, maxdepth).close()
+                tolerance = tolerance or 1e-01
+                _shape = ksy.shape(shape).close().bezier2line()
                 xmin, ymin, xmax, ymax = _shape.xyMinMax()
                 _shape = string.gsub(_shape.out(), "m [^m]+%d", function(m)
                     m = ksy.shape(m)
@@ -1393,11 +1537,11 @@ ksy = {
                             _points.add(xys.at(i + 1, i + 2))
                         elseif mode == 2 then
                             local is_intersect = ksy.is_intersect(xys.at(i).x, xys.at(i).y, xys.at(i + 1).x,
-                                xys.at(i + 1).y,
-                                xys.at(i + 2).x, xys.at(i + 2).y, xys.at(i + 3).x, xys.at(i + 3).y)
-                            local px, py = ksy.intersect(xys.at(i).x, xys.at(i).y, xys.at(i + 1).x, xys.at(i + 1).y,
-                                xys.at(i + 2).x, xys.at(i + 2).y, xys.at(i + 3).x, xys.at(i + 3).y)
-                            if is_intersect then
+                                xys.at(i + 1).y, xys.at(i + 2).x, xys.at(i + 2).y, xys.at(i + 3).x, xys.at(i + 3).y)
+                            local px, py = ksy.intersect(xys.at(i).x, xys.at(i).y, xys.at(i + 1).x,
+                                xys.at(i + 1).y, xys.at(i + 2).x, xys.at(i + 2).y, xys.at(i + 3).x, xys.at(i + 3).y)
+                            if not px then
+                            elseif is_intersect then
                                 _commands.add("l")
                                 _points.add({ x = px, y = py })
                             else
@@ -1412,7 +1556,10 @@ ksy = {
                 end)
                 return ksy.shape(_shape)
             end,
-            cutout = function(_shape, tolerance, maxdepth)
+            --[[@param _shape string|function|table 要裁剪出去的绘图]]
+            --[[@param tolerance number|nil bezier2line参数]]
+            --[[@param maxdepth number|nil bezier2line参数]]
+            cutout = function(_shape, tolerance, maxdepth) --[[裁剪绘图]]
                 local shapeA = ksy.shape(shape).close().bezier2line(tolerance, maxdepth)
                 local shapeB = ksy.shape(_shape).close().bezier2line(tolerance, maxdepth)
                 if shapeA.is_clockwise() == shapeB.is_clockwise() then
@@ -1485,6 +1632,8 @@ ksy = {
     eval = function(s) --[[解析表达式]]
         _G.line = line
         _G.orgline = orgline
+        _G.j = j
+        _G.maxj = maxj
         local f = load("return " .. s, "eval", "t", _G)
         if not f then return s end
         local ok, res = pcall(f)
@@ -1521,13 +1670,12 @@ ksy = {
                 gap_frame = gap_frame or 0
                 start_time = start_time or 0
                 end_time = end_time or line.duration
-                factor = factor or 1
+                factor = factor and ("," .. ksy.eval(factor)) or ""
                 local cur_frame = aegisub.frame_from_ms(line.start_time + start_time)
                 local end_frame = aegisub.frame_from_ms(line.start_time + end_time)
                 while cur_frame < end_frame do
                     result = result .. "\\t(" .. ksy.frame2t(cur_frame) .. "," ..
-                        ksy.frame2t(cur_frame + dur_frame) ..
-                        "," .. ksy.eval(factor) .. "," .. ksy.eff(unpack(fixedstr)).genEff() .. ")"
+                        ksy.frame2t(cur_frame + dur_frame) .. factor .. "," .. ksy.eff(unpack(fixedstr)).genEff() .. ")"
                     cur_frame = cur_frame + dur_frame + gap_frame
                 end
                 return result
@@ -1543,13 +1691,12 @@ ksy = {
                 gap_frame = gap_frame or 0
                 start_frame = start_frame or 0
                 end_frame = end_frame or (aegisub.frame_from_ms(line.end_time) - aegisub.frame_from_ms(line.start_time))
-                factor = factor or 1
+                factor = factor and ("," .. ksy.eval(factor)) or ""
                 local cur_frame = aegisub.frame_from_ms(line.start_time) + start_frame
                 end_frame = aegisub.frame_from_ms(line.start_time) + end_frame
                 while cur_frame < end_frame do
                     result = result .. "\\t(" .. ksy.frame2t(cur_frame) .. "," ..
-                        ksy.frame2t(cur_frame + dur_frame) ..
-                        "," .. ksy.eval(factor) .. "," .. ksy.eff(unpack(fixedstr)).genEff() .. ")"
+                        ksy.frame2t(cur_frame + dur_frame) .. factor .. "," .. ksy.eff(unpack(fixedstr)).genEff() .. ")"
                     cur_frame = cur_frame + dur_frame + gap_frame
                 end
                 return result
