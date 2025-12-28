@@ -94,7 +94,7 @@ ksy = {
     end,
     --[[@return integer]]
     flen = function() --[[当前行总帧数]]
-        return aegisub.frame_from_ms(line.end_time - line.start_time)
+        return aegisub.frame_from_ms(line.end_time - line.start_time) - 1
     end,
     --[[@param fstart integer|nil 开始帧数]]
     --[[@param fend integer|nil 结束帧数]]
