@@ -2324,9 +2324,27 @@ local function _callineleft(init)
 end
 
 local function _getlineeffects(text)
-    text = text and text or line.text
+    content = text and text or line.text
+    local eff = re.find(content, "![^!]+!") ~= nil
+    if eff then
+        _G.flag = nil
+        local effects = re.find(content, "\\{[^\\}]+\\}")
+        if effects ~= nil then
+            content = re.sub(content, "\\{[^\\}]+\\}", "{}")
+        end
+        if effects ~= nil then
+            for _, effect in ipairs(effects) do
+                effect["str"] = re.sub(effect["str"], "\x21[^\x21]+\x21",
+                    function(_eff)
+                        local value = ksy.eval(ksy.sub(_eff, 2, -2))
+                        return type(value) == "number" and tostring(value) or value
+                    end)
+            end
+            content = re.sub(content, "\\{\\}", function() return table.remove(effects, 1)["str"] end)
+        end
+    end
     local _effects = ""
-    for str, _, _ in re.gfind(text, "{.*?}") do
+    for str, _, _ in re.gfind(content, "{.*?}") do
         _effects = _effects .. str
     end
     _effects = re.sub(_effects, "\\\\an\\d", "")
@@ -2356,8 +2374,26 @@ end
 
 function ksy_content()
     local content = line.text
-    local effects = re.find(content, "\\{[^\\}]+\\}")
-    if effects ~= nil then
+    local eff = re.find(content, "![^!]+!") ~= nil
+    if eff then
+        _G.flag = nil
+        local effects = re.find(content, "\\{[^\\}]+\\}")
+        if effects ~= nil then
+            content = re.sub(content, "\\{[^\\}]+\\}", "{}")
+        end
+        if effects ~= nil then
+            for _, effect in ipairs(effects) do
+                effect["str"] = re.sub(effect["str"], "\x21[^\x21]+\x21",
+                    function(_eff)
+                        local value = ksy.eval(ksy.sub(_eff, 2, -2))
+                        return type(value) == "number" and tostring(value) or value
+                    end)
+            end
+            content = re.sub(content, "\\{\\}", function() return table.remove(effects, 1)["str"] end)
+        end
+    end
+    local _effects = re.find(content, "\\{[^\\}]+\\}")
+    if _effects ~= nil then
         content = re.sub(content, "\\{[^\\}]+\\}", "{}")
     end
     if orgline.styleref["align"] == 7 then
@@ -2378,14 +2414,14 @@ function ksy_content()
             content = ksy.rep(content, search, replace)
         end
     end
-    if effects ~= nil then
-        for _, effect in ipairs(effects) do
+    if _effects ~= nil then
+        for _, effect in ipairs(_effects) do
             effect["str"] = re.sub(effect["str"], "![^!]+!", function(_eff)
                 return ksy.eval(ksy.sub(_eff, 2, -2))
             end)
         end
         content = re.sub(content, "\\{\\}", function()
-            return table.remove(effects, 1)["str"]
+            return table.remove(_effects, 1)["str"]
         end)
     end
     if orgline.styleref["align"] == 7 and re.find(content, "\\\\N") ~= nil then
